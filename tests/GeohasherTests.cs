@@ -17,15 +17,14 @@ namespace Geohash.Test
         }
 
         [Fact]
-        public void Should_Encode_WithGivenPrecision()
+        public void Should_Encode_WithGivenPrecision_11()
         {
             var hasher = new Geohasher();
 
-            var hash = hasher.Encode(52.517395, 13.408813, 12);
+            var hash = hasher.Encode(52.517395, 13.408813, 11);
 
-            Assert.Equal("u33dc07zzzzx", hash);
+            Assert.Equal("u33dc07zzzz", hash);
         }
-
 
         [Fact]
         public void Should_Decode_Precision6()
@@ -74,6 +73,40 @@ namespace Geohash.Test
             Assert.Equal("u33d8z", subhashes[Direction.SouthWest]);
             Assert.Equal("u33dbb", subhashes[Direction.West]);
             Assert.Equal("u33dbc", subhashes[Direction.NorthWest]);
+        }
+
+        [Fact]
+        public void Should_Give_Neighbors_EdgeTestLat()
+        {
+            var hasher = new Geohasher();
+
+            var subhashes = hasher.GetNeighbors("u");
+
+            Assert.Equal("h", subhashes[Direction.North]);
+            Assert.Equal("5", subhashes[Direction.NorthWest]);
+            Assert.Equal("j", subhashes[Direction.NorthEast]);
+            Assert.Equal("v", subhashes[Direction.East]);
+            Assert.Equal("s", subhashes[Direction.South]);
+            Assert.Equal("e", subhashes[Direction.SouthWest]);
+            Assert.Equal("t", subhashes[Direction.SouthEast]);
+            Assert.Equal("g", subhashes[Direction.West]);
+        }
+
+        [Fact]
+        public void Should_Give_Neighbors_EdgeTestLong()
+        {
+            var hasher = new Geohasher();
+
+            var subhashes = hasher.GetNeighbors("9");
+
+            Assert.Equal("c", subhashes[Direction.North]);
+            Assert.Equal("b", subhashes[Direction.NorthWest]);
+            Assert.Equal("f", subhashes[Direction.NorthEast]);
+            Assert.Equal("d", subhashes[Direction.East]);
+            Assert.Equal("3", subhashes[Direction.South]);
+            Assert.Equal("2", subhashes[Direction.SouthWest]);
+            Assert.Equal("6", subhashes[Direction.SouthEast]);
+            Assert.Equal("8", subhashes[Direction.West]);
         }
 
         [Fact]
