@@ -37,8 +37,6 @@ To use the geohash library in your projects run the following command in the Pac
 
 #### Get neighbors for a hash
 
-<img src="https://github.com/Postlagerkarte/geohash-dotnet/blob/master/neighbors.png" width="64" height="64" />
-
  ```csharp
      var hasher = new Geohasher();
      var neighbors         = hasher.GetNeighbors("m");
