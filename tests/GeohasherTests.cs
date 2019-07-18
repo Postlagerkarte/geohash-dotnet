@@ -1,4 +1,4 @@
-using GeoTools;
+using Geohash;
 using System;
 using Xunit;
 
