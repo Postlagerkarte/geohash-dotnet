@@ -2,6 +2,7 @@
 
   <PropertyGroup>
     <TargetFramework>netstandard2.0</TargetFramework>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <GeneratePackageOnBuild>true</GeneratePackageOnBuild>
     <PackageId>geohash-dotnet</PackageId>
     <Authors>Hans-Juergen Pavelka</Authors>
@@ -12,6 +13,10 @@
     <PackageProjectUrl>https://github.com/postlagerkarte/geohash-dotnet</PackageProjectUrl>
     <PackageIconUrl>https://github.com/postlagerkarte/geohash-dotnet/raw/master/icon.png</PackageIconUrl>
     <PackageTags>geohash dotnet core csharp c#</PackageTags>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|AnyCPU'">
+    <DocumentationFile></DocumentationFile>
   </PropertyGroup>
 
 </Project>
