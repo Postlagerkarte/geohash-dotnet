@@ -2,6 +2,16 @@
 
   <PropertyGroup>
     <TargetFramework>netstandard2.0</TargetFramework>
+    <GeneratePackageOnBuild>true</GeneratePackageOnBuild>
+    <PackageId>geohash-dotnet</PackageId>
+    <Authors>Hans-Juergen Pavelka</Authors>
+    <Company>Hans-Juergen Pavelka</Company>
+    <Description>Easy-to-use and feature-rich geohash library</Description>
+    <Copyright>Copyright (c) 2019 Hans-Juergen Pavelka</Copyright>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageProjectUrl>https://github.com/postlagerkarte/geohash-dotnet</PackageProjectUrl>
+    <PackageIconUrl>https://github.com/postlagerkarte/geohash-dotnet/raw/master/icon.png</PackageIconUrl>
+    <PackageTags>geohash dotnet core csharp c#</PackageTags>
   </PropertyGroup>
 
 </Project>
