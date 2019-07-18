@@ -295,50 +295,6 @@ namespace Geohash
 
             return Encode(lat, lon, geoHash.Length);
         }
-
-        private string adjacentHashAtBorder(String hashn)
-        {
-            // check if hash is on edge and direction would push us over the edge
-            // if so, wrap round to the other limit for longitude
-            // or if at latitude boundary (a pole) then spin longitude around 180
-            // degrees.
-            //var centre = Decode(hash);
-
-            //// if rightmost hash
-            //if (Direction.RIGHT.equals(direction))
-            //{
-            //    if (Math.abs(centre.getLon() + widthDegrees(hash.length()) / 2 - 180) < PRECISION)
-            //    {
-            //        return encodeHash(centre.getLat(), -180, hash.length());
-            //    }
-            //}
-            //// if leftmost hash
-            //else if (Direction.LEFT.equals(direction))
-            //{
-            //    if (Math.abs(centre.getLon() - widthDegrees(hash.length()) / 2 + 180) < PRECISION)
-            //    {
-            //        return encodeHash(centre.getLat(), 180, hash.length());
-            //    }
-            //}
-            //// if topmost hash
-            //else if (Direction.TOP.equals(direction))
-            //{
-            //    if (Math.abs(centre.getLat() + widthDegrees(hash.length()) / 2 - 90) < PRECISION)
-            //    {
-            //        return encodeHash(centre.getLat(), centre.getLon() + 180, hash.length());
-            //    }
-            //}
-            //// if bottommost hash
-            //else
-            //{
-            //    if (Math.abs(centre.getLat() - widthDegrees(hash.length()) / 2 + 90) < PRECISION)
-            //    {
-            //        return encodeHash(centre.getLat(), centre.getLon() + 180, hash.length());
-            //    }
-            //}
-
-            return null;
-        }
     }
 
     public enum Direction
