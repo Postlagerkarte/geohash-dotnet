@@ -76,7 +76,7 @@ namespace Geohash.Test
         }
 
         [Fact]
-        public void Should_Give_Neighbors_EdgeTestLat()
+        public void Should_Give_Neighbors_EdgeNorth()
         {
             var hasher = new Geohasher();
 
@@ -93,7 +93,7 @@ namespace Geohash.Test
         }
 
         [Fact]
-        public void Should_Give_Neighbors_EdgeTestLong()
+        public void Should_Give_Neighbors_EdgeWest()
         {
             var hasher = new Geohasher();
 
@@ -107,6 +107,23 @@ namespace Geohash.Test
             Assert.Equal("2", subhashes[Direction.SouthWest]);
             Assert.Equal("6", subhashes[Direction.SouthEast]);
             Assert.Equal("8", subhashes[Direction.West]);
+        }
+
+        [Fact]
+        public void Should_Give_Neighbors_EdgeSouth()
+        {
+            var hasher = new Geohasher();
+
+            var subhashes = hasher.GetNeighbors("h");
+
+            Assert.Equal("k", subhashes[Direction.North]);
+            Assert.Equal("7", subhashes[Direction.NorthWest]);
+            Assert.Equal("m", subhashes[Direction.NorthEast]);
+            Assert.Equal("j", subhashes[Direction.East]);
+            Assert.Equal("u", subhashes[Direction.South]);
+            Assert.Equal("g", subhashes[Direction.SouthWest]);
+            Assert.Equal("v", subhashes[Direction.SouthEast]);
+            Assert.Equal("5", subhashes[Direction.West]);
         }
 
         [Fact]

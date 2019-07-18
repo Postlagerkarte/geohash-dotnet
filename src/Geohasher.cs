@@ -234,6 +234,13 @@ namespace GeoTools
             double latDiff = bbox[1] - bbox[0];
             double lat = bbox[0] - latDiff / 2;
             double lon = (bbox[2] + bbox[3]) / 2;
+
+            if (lat < -90)
+            {
+                lat = (-90 + (-90 - lat)) * -1;
+            }
+
+
             return Encode(lat, lon, geoHash.Length);
         }
 
