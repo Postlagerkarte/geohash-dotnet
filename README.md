@@ -16,19 +16,22 @@ To use the geohash library in your projects run the following command in the Pac
  ```
  
  ### Usage Examples
+ 
+ #### Create a Geohasher object
+ ```csharp
+ var hasher = new Geohasher();
+ ```
   
- #### Encode a latitude and longitude to a geohash:
+ #### Encode a latitude and longitude to a geohash
  
  ```csharp
-    var hasher = new Geohasher();
-    var hash6 = hasher.Encode(52.5174, 13.409);  // default precision 6 
-    var hash12 = hasher.Encode(52.5174, 13.409, 12);  // precision 12
+    var hash  = hasher.Encode(52.5174, 13.409);  // default precision 6 
+    var hash2 = hasher.Encode(52.5174, 13.409, 12);  // precision 12
  ```
  
-  #### Decode a geohash to latitude and longitude:
+  #### Decode a geohash to latitude and longitude
  
  ```csharp
-     var hasher = new Geohasher();
      var decoded = hasher.Decode("u33dc0");
      var latitude = decoded.Item1;
      var longitude = decoded.Item2;
@@ -38,7 +41,6 @@ To use the geohash library in your projects run the following command in the Pac
 #### Get neighbors for a hash
 
  ```csharp
-     var hasher = new Geohasher();
      var neighbors         = hasher.GetNeighbors("m");
      var northNeighbor     = neighbors[Direction.North];
      var northEastNeighbor = neighbors[Direction.NorthEast]);
@@ -49,5 +51,25 @@ To use the geohash library in your projects run the following command in the Pac
      var westNeighbor      = neighbors[Direction.West]);
      var northWestNeighbor = neighbors[Direction.NorthWest]);
  ```
+ 
+ #### Get specific neighbor for a hash
+ 
+  ```csharp
+ var southEastNeighbor = hasher.GetNeighbor("u33dc0", Direction.SouthEast));
+ ```
+ 
+ #### Get all 32 subhashes for a hash
+ 
+ ```csharp
+ var subhashes = hasher.GetSubhashes("u33dc0");
+ ```
+ 
+  #### Get parent of a hash
+ 
+ ```csharp
+ var parentHash = hasher.GetParent("u33dbc")
+ ```
+ 
+ 
 
 
