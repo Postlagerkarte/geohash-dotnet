@@ -20,4 +20,8 @@
     <DocumentationFile></DocumentationFile>
   </PropertyGroup>
 
+  <ItemGroup>
+    <PackageReference Include="NetTopologySuite" Version="1.15.3" />
+  </ItemGroup>
+
 </Project>

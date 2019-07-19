@@ -173,5 +173,18 @@ namespace Geohash.Test
 
             Assert.Throws<ArgumentException>(() => hasher.Encode(52.517395, 183.408813, 12));
         }
+
+        [Fact]
+        public void Should_Get_BoundingBox()
+        {
+            var hasher = new Geohasher();
+
+            var envelope = hasher.GetBoundingBox("u");
+
+            Assert.Equal(90, envelope.MaxX);
+            Assert.Equal(45, envelope.MaxY);
+            Assert.Equal(45, envelope.MinX);
+            Assert.Equal(0, envelope.MinY);
+        }
     }
 }

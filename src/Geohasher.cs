@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using System.Text;
 using System.Linq;
+using GeoAPI.Geometries;
 
 namespace Geohash
 {
@@ -151,9 +152,22 @@ namespace Geohash
         /// <returns>parent geohash</returns>
         public string GetParent(string geohash)
         {
+            ValidateGeohash(geohash);
+            return geohash.Substring(0, geohash.Length - 1);
+        }
+
+        private static void ValidateGeohash(string geohash)
+        {
             if (String.IsNullOrEmpty(geohash)) throw new ArgumentNullException("geohash");
             if (geohash.Length > 12) throw new ArgumentException("geohash length > 12");
-            return geohash.Substring(0, geohash.Length - 1);
+        }
+
+        public Envelope GetBoundingBox(string geohash)
+        {
+            ValidateGeohash(geohash);
+            var bbox = DecodeAsBox(geohash);
+
+            return new Envelope(bbox[0], bbox[1], bbox[2], bbox[3]);
         }
 
         private Dictionary<Direction, string> CreateNeighbors(string geohash)
