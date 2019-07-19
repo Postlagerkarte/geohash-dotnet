@@ -59,6 +59,16 @@ namespace Geohash.Test
         }
 
         [Fact]
+        public void Should_Give_Subhashes_1()
+        {
+            var hasher = new Geohasher();
+
+            var subhashes = hasher.GetSubhashes("u");
+
+            Assert.Equal(32, subhashes.Length);
+        }
+
+        [Fact]
         public void Should_Give_Neighbors()
         {
             var hasher = new Geohasher();

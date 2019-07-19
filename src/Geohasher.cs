@@ -89,14 +89,14 @@ namespace Geohash
         /// <summary>
         /// Return the 32 subhashes for the given geohash string.
         /// </summary>
-        /// <param name="geoHash">geohash for which to get the subhashes.</param>
+        /// <param name="geohash">geohash for which to get the subhashes.</param>
         /// <returns>subhashes</returns>
         public string[] GetSubhashes(string geohash)
         {
             if (String.IsNullOrEmpty(geohash)) throw new ArgumentNullException("geohash");
-            if (geohash.Length > 12) throw new ArgumentException("geohash length > 12");
+            if (geohash.Length > 11) throw new ArgumentException("geohash length must be < 12");
 
-            return base32Chars.Select(x => $"geohash{x}").ToArray();
+            return base32Chars.Select(x => $"{geohash}{x}").ToArray();
         }
 
         /// <summary>
