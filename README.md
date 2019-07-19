@@ -2,10 +2,8 @@
 lightweight geohash library written in C# 
 
 
-[![Build status](https://ci.appveyor.com/api/projects/status/pidjjvq7oeb2ai34?svg=true)](https://ci.appveyor.com/project/Postlagerkarte/geohash-dotnet)
-![alt text][logo]
+[![Build status](https://ci.appveyor.com/api/projects/status/pidjjvq7oeb2ai34?svg=true)](https://ci.appveyor.com/project/Postlagerkarte/geohash-dotnet) [![Nuget](https://img.shields.io/nuget/v/geohash-dotnet.svg?svg=true)](https://www.nuget.org/packages/geohash-dotnet/)
 
-[logo]: https://img.shields.io/nuget/v/geohash-dotnet.svg
 
 ### Installation
 
