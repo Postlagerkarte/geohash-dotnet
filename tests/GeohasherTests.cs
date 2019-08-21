@@ -1,4 +1,6 @@
+using GeoAPI.Geometries;
 using Geohash;
+using NetTopologySuite.Geometries;
 using System;
 using Xunit;
 
@@ -185,6 +187,24 @@ namespace Geohash.Test
             Assert.Equal(45, envelope.MaxY);
             Assert.Equal(45, envelope.MinX);
             Assert.Equal(0, envelope.MinY);
+        }
+
+        [Fact]
+        public void Should_Get_Hashes_For_Polygon()
+        {
+            var hasher = new Geohasher();
+
+            var geometryFactory = new GeometryFactory();
+
+            var p1 = new Coordinate() { X = 9.612350463867186, Y = 52.31141727938367 };
+            var p2 = new Coordinate() { X = 9.914474487304686, Y = 52.31141727938367 };
+            var p3 = new Coordinate() { X = 9.914474487304686, Y = 52.42252295423907 };
+            var p4 = new Coordinate() { X = 9.612350463867186, Y = 52.42252295423907 };
+
+            var polygon = geometryFactory.CreatePolygon(new[] { p1, p2, p3, p4, p1 });
+
+            var result = hasher.GetHashes(polygon);
+
         }
     }
 }
