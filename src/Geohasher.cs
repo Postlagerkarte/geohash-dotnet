@@ -156,18 +156,24 @@ namespace Geohash
             return geohash.Substring(0, geohash.Length - 1);
         }
 
-        private static void ValidateGeohash(string geohash)
-        {
-            if (String.IsNullOrEmpty(geohash)) throw new ArgumentNullException("geohash");
-            if (geohash.Length > 12) throw new ArgumentException("geohash length > 12");
-        }
 
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <param name="geohash">geohash for which to get the bounding box.</param>
+        /// <returns>Envelope representing the bounding box.</returns>
         public Envelope GetBoundingBox(string geohash)
         {
             ValidateGeohash(geohash);
             var bbox = DecodeAsBox(geohash);
 
             return new Envelope(bbox[0], bbox[1], bbox[2], bbox[3]);
+        }
+
+        private static void ValidateGeohash(string geohash)
+        {
+            if (String.IsNullOrEmpty(geohash)) throw new ArgumentNullException("geohash");
+            if (geohash.Length > 12) throw new ArgumentException("geohash length > 12");
         }
 
         private Dictionary<Direction, string> CreateNeighbors(string geohash)
@@ -311,15 +317,5 @@ namespace Geohash
         }
     }
 
-    public enum Direction
-    {
-        North = 0,
-        NorthEast = 1,
-        East = 2,
-        SouthEast = 3,
-        South = 4,
-        SouthWest = 5,
-        West = 6,
-        NorthWest = 7
-    }
+
 }
