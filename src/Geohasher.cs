@@ -2,7 +2,7 @@
 using System.Collections.Generic;
 using System.Text;
 using System.Linq;
-using GeoAPI.Geometries;
+using NetTopologySuite.Geometries;
 
 namespace Geohash
 {
@@ -169,7 +169,7 @@ namespace Geohash
             return new Envelope(bbox[0], bbox[1], bbox[2], bbox[3]);
         }
 
-        public List<string> GetHashes(IPolygon polygon, int precision = 6, Mode mode = Mode.Contains, IProgress<HashingProgress> progress = null)
+        public List<string> GetHashes(Polygon polygon, int precision = 6, Mode mode = Mode.Contains, IProgress<HashingProgress> progress = null)
         {
             return new PolygonHasher().GetHashes(polygon, precision, mode, progress);
         }

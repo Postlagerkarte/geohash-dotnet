@@ -1,5 +1,4 @@
-﻿using GeoAPI.Geometries;
-using NetTopologySuite.Geometries;
+﻿using NetTopologySuite.Geometries;
 using System;
 using System.Collections.Generic;
 using System.ComponentModel;
@@ -14,7 +13,7 @@ namespace Geohash
 
         private Geohasher geohasher = new Geohasher();
 
-        private IGeometry GeohashToPolygon(string geohash)
+        private Geometry GeohashToPolygon(string geohash)
         {
 
 
@@ -36,7 +35,7 @@ namespace Geohash
 
         }
 
-        public List<string> GetHashes(IPolygon polygon, int precision, Mode mode, IProgress<HashingProgress> progress = null)
+        public List<string> GetHashes(Polygon polygon, int precision, Mode mode, IProgress<HashingProgress> progress = null)
         {
             var startTime = DateTime.Now;
 
@@ -84,7 +83,7 @@ namespace Geohash
             return processedHashes.Where(x => x.Value == true).Select(x => x.Key).ToList();
         }
 
-        private bool CheckIfMatch(IPolygon polygon, IGeometry current_polygon, Mode mode)
+        private bool CheckIfMatch(Polygon polygon, Geometry current_polygon, Mode mode)
         {
             if (mode == Mode.Intersect)
             {

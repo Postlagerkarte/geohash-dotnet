@@ -1,4 +1,3 @@
-using GeoAPI.Geometries;
 using Geohash;
 using NetTopologySuite.Geometries;
 using System;
