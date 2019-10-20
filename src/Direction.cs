@@ -4,6 +4,9 @@ using System.Text;
 
 namespace Geohash
 {
+    /// <summary>
+    /// Direction
+    /// </summary>
     public enum Direction
     {
         /// <summary>
