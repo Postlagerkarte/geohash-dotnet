@@ -2,7 +2,7 @@
 Easy-to-use and feature-rich geohash library 
 
 
-[![Build status](https://ci.appveyor.com/api/projects/status/pidjjvq7oeb2ai34?svg=true)](https://ci.appveyor.com/project/Postlagerkarte/geohash-dotnet) [![Nuget](https://img.shields.io/nuget/v/geohash-dotnet.svg?svg=true)](https://www.nuget.org/packages/geohash-dotnet/)
+[![Build Status](https://dev.azure.com/postlagerkarte/geohash-dotnet/_apis/build/status/Postlagerkarte.geohash-dotnet?branchName=master)](https://dev.azure.com/postlagerkarte/geohash-dotnet/_build/latest?definitionId=4&branchName=master)
 
 If you want to see the library in action visit https://geohash.azurewebsites.net/
 
