@@ -29,10 +29,13 @@ steps:
     configuration: '$(buildConfiguration)'
 
 - task: VSTest@2
+  displayName: 'Run Tests'
   inputs:
-   testSelector: 'testAssemblies'
-   testAssemblyVer2: |
-     **\*test.dll
-     !**\*TestAdapter.dll
-     !**\obj\**
-    searchFolder: '@(System.DefaultWorkingDirectory)'
+    testAssemblyVer2: '**/*.Tests.dll'
+    searchFolder: '$(System.DefaultWorkingDirectory)'
+    testRunTitle: 'geohash tests'
+    platform: '$(BuildPlatform)'
+    configuration: '$(BuildConfiguration)'
+    diagnosticsEnabled: true
+    codeCoverageEnabled: true
+    runInParallel: true
