@@ -36,6 +36,6 @@ steps:
     testRunTitle: 'geohash tests'
     platform: '$(BuildPlatform)'
     configuration: '$(BuildConfiguration)'
-    diagnosticsEnabled: true
-    codeCoverageEnabled: true
+    diagnosticsEnabled: false
+    codeCoverageEnabled: false
     runInParallel: true
