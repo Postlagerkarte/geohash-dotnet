@@ -31,16 +31,14 @@ steps:
     projects: '**/*Tests*.csproj'
     arguments: '--configuration $(buildConfiguration)'
 
-- task: DotNetCoreCLI@2
-  displayName: Publish
+- task: NuGetCommand@2
   inputs:
-    command: publish
-    publishWebProjects: False
-    arguments: '--no-build --no-restore --configuration $(BuildConfiguration) --output $(Build.ArtifactStagingDirectory)'
-    zipAfterPublish: True 
+    command: 'pack'
+    packagesToPack: '**/Geohash.csproj'
+    versioningScheme: 'off'
 
 - task: PublishBuildArtifacts@1
   inputs:
     PathtoPublish: '$(Build.ArtifactStagingDirectory)'
-    ArtifactName: 'drop_$(Build.BuildNumber)'
+    ArtifactName: 'nuget_$(Build.BuildNumber)'
     publishLocation: 'Container'
