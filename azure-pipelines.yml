@@ -40,5 +40,5 @@ steps:
 - task: PublishBuildArtifacts@1
   inputs:
     PathtoPublish: '$(Build.ArtifactStagingDirectory)'
-    ArtifactName: 'nuget_$(Build.BuildNumber)'
+    ArtifactName: 'nuget'
     publishLocation: 'Container'
