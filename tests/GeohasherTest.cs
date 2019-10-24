@@ -1,6 +1,7 @@
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using NetTopologySuite.Geometries;
 using System;
+using System.Diagnostics;
 
 namespace Geohash.Tests
 {
@@ -189,7 +190,7 @@ namespace Geohash.Tests
         }
 
         [TestMethod]
-        public void Should_Get_Hashes_For_Polygon()
+        public async System.Threading.Tasks.Task Should_Get_Hashes_For_PolygonAsync()
         {
             var hasher = new Geohasher();
 
@@ -202,8 +203,52 @@ namespace Geohash.Tests
 
             var polygon = geometryFactory.CreatePolygon(new[] { p1, p2, p3, p4, p1 });
 
-            var result = hasher.GetHashes(polygon);
+            var result = await hasher.GetHashesAsync(polygon, 6);
+
+        }
+
+        [TestMethod]
+        public async System.Threading.Tasks.Task Should_Get_Hashes_For_PolygonAsync_LongRunning()
+        {
+            var hasher = new Geohasher();
+
+            var geometryFactory = new GeometryFactory();
+
+            var progess = new Progress<HashingProgress>();
+
+            progess.ProgressChanged += (e,hp) =>
+            {
+                Debug.WriteLine($"Processed: {hp.HashesProcessed}, Queued: {hp.QueueSize}, Running Since: {hp.RunningSince}");
+            };
+
+            var p1 = new Coordinate() { X = 38.583984375, Y = 60.23981116999893 };
+            var p2 = new Coordinate() { X = 20.214843749999996, Y = 53.592504809039376 };
+            var p3 = new Coordinate() { X = 23.37890625, Y = 44.08758502824516 };
+            var p4 = new Coordinate() { X = 35.419921875, Y = 47.338822694822 };
+
+            var p5 = new Coordinate() { X = 45.703125, Y = 47.100044694025215 };
+            var p6 = new Coordinate() { X = 49.21875, Y = 50.56928286558243 };
+            var p7 = new Coordinate() { X = 35.33203125, Y = 50.736455137010665 };
+            var p8 = new Coordinate() { X = 45.08789062499999, Y = 52.32191088594773 };
+
+            var p9 = new Coordinate() { X = 49.833984375, Y = 51.39920565355378 };
+            var p10 = new Coordinate() { X = 49.74609374999999, Y = 55.32914440840507 };
+            var p11 = new Coordinate() { X = 34.716796875, Y = 53.225768435790194 };
+            var p12 = new Coordinate() { X = 42.451171875, Y = 57.088515327886505 };
+
+            var p13 = new Coordinate() { X = 55.283203125, Y = 62.226996036319726 };
+            var p14 = new Coordinate() { X = 38.583984375, Y = 60.23981116999893 };
+
+
+            var polygon = geometryFactory.CreatePolygon(new[] { p1, p2, p3, p4, p5, p6, p7, p8, p9, p10, p11, p12, p13, p14, p1 });
+
+            var result = await hasher.GetHashesAsync(polygon, 6, progress: progess);
 
         }
     }
+
+   
 }
+
+
+    

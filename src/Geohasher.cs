@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Text;
 using System.Linq;
 using NetTopologySuite.Geometries;
+using System.Threading.Tasks;
 
 namespace Geohash
 {
@@ -169,9 +170,9 @@ namespace Geohash
             return new Envelope(bbox[0], bbox[1], bbox[2], bbox[3]);
         }
 
-        public List<string> GetHashes(Polygon polygon, int precision = 6, Mode mode = Mode.Contains, IProgress<HashingProgress> progress = null)
+        public async Task<List<string>> GetHashesAsync(Polygon polygon, int precision = 6, Mode mode = Mode.Contains, IProgress<HashingProgress> progress = null)
         {
-            return new PolygonHasher().GetHashes(polygon, precision, mode, progress);
+            return await new PolygonHasher().GetHashesAsync(polygon, precision, mode, progress);
         }
 
 

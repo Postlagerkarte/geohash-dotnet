@@ -4,6 +4,10 @@ using System.Collections.Generic;
 using System.ComponentModel;
 using System.Linq;
 using System.Text;
+using System.Collections.Concurrent;
+using System.Threading.Tasks;
+using System.Threading;
+using System.Diagnostics;
 
 namespace Geohash
 {
@@ -35,52 +39,101 @@ namespace Geohash
 
         }
 
-        public List<string> GetHashes(Polygon polygon, int precision, Mode mode, IProgress<HashingProgress> progress = null)
+        public async Task<List<string>> GetHashesAsync(Polygon polygon, int precision, Mode mode, IProgress<HashingProgress> progress = null)
         {
-            var startTime = DateTime.Now;
+            var stopwatch = Stopwatch.StartNew();
 
             var envelope = polygon.Envelope;
             var centroid = polygon.Centroid;
 
-            var queuedHashes = new Queue<string>();
-            var processedHashes = new Dictionary<string, bool>();
+            var queuedHashes = new ConcurrentQueue<string>();
+            var processedHashes = new ConcurrentDictionary<string, bool>();
+
 
             queuedHashes.Enqueue(geohasher.Encode(polygon.Centroid.X, polygon.Centroid.Y, precision));
 
-            while (queuedHashes.Count > 0)
+            do
             {
-                var current_geohash = queuedHashes.Dequeue();
-
-                progress?.Report(new HashingProgress() { QueueSize = queuedHashes.Count, HashesProcessed = processedHashes.Count, RunningSince = startTime });
-
-                if (!processedHashes.ContainsKey(current_geohash))
+                var tasks = Enumerable.Range(1, queuedHashes.Count).Select(_ =>
                 {
-                    var current_polygon = GeohashToPolygon(current_geohash);
-
-                    if (envelope.Intersects(current_polygon))
+                    return Task.Factory.StartNew(() =>
                     {
-                        if (CheckIfMatch(polygon, current_polygon, mode))
+                        if (queuedHashes.TryDequeue(out string current_geohash))
                         {
-                            processedHashes.Add(current_geohash, true);
-                        }
-                        else
-                        {
-                            processedHashes.Add(current_geohash, false);
-                        }
-
-                        foreach (var neighborHash in geohasher.GetNeighbors(current_geohash).Values)
-                        {
-                            if (!processedHashes.ContainsKey(neighborHash))
+                            if (!processedHashes.ContainsKey(current_geohash))
                             {
-                                queuedHashes.Enqueue(neighborHash);
+                                var current_polygon = GeohashToPolygon(current_geohash);
+
+                                if (envelope.Intersects(current_polygon))
+                                {
+                                    if (CheckIfMatch(polygon, current_polygon, mode))
+                                    {
+                                        processedHashes.TryAdd(current_geohash, true);
+                                    }
+                                    else
+                                    {
+                                        processedHashes.TryAdd(current_geohash, false);
+                                    }
+
+                                    foreach (var neighborHash in geohasher.GetNeighbors(current_geohash).Values)
+                                    {
+                                        if (!processedHashes.ContainsKey(neighborHash))
+                                        {
+                                            queuedHashes.Enqueue(neighborHash);
+                                        }
+                                    }
+                                }
                             }
                         }
-                    }
-                }
-            }
+                    });
+                });
+
+                await Task.WhenAll(tasks.ToArray());
+
+                progress?.Report(new HashingProgress() { QueueSize = queuedHashes.Count, HashesProcessed = processedHashes.Count, RunningSince = stopwatch.Elapsed });
+
+            } while (queuedHashes.Count != 0);
 
 
-            return processedHashes.Where(x => x.Value == true).Select(x => x.Key).ToList();
+            var res = processedHashes.Where(x => x.Value == true).Select(x => x.Key).ToList();
+
+
+            
+            return res;
+            //while (queuedHashes.Count > 0)
+            //{
+            //    var current_geohash = queuedHashes.Dequeue();
+
+            //    progress?.Report(new HashingProgress() { QueueSize = queuedHashes.Count, HashesProcessed = processedHashes.Count, RunningSince = startTime });
+
+            //    if (!processedHashes.ContainsKey(current_geohash))
+            //    {
+            //        var current_polygon = GeohashToPolygon(current_geohash);
+
+            //        if (envelope.Intersects(current_polygon))
+            //        {
+            //            if (CheckIfMatch(polygon, current_polygon, mode))
+            //            {
+            //                processedHashes.Add(current_geohash, true);
+            //            }
+            //            else
+            //            {
+            //                processedHashes.Add(current_geohash, false);
+            //            }
+
+            //            foreach (var neighborHash in geohasher.GetNeighbors(current_geohash).Values)
+            //            {
+            //                if (!processedHashes.ContainsKey(neighborHash))
+            //                {
+            //                    queuedHashes.Enqueue(neighborHash);
+            //                }
+            //            }
+            //        }
+            //    }
+            //}
+
+
+            //return processedHashes.Where(x => x.Value == true).Select(x => x.Key).ToList();
         }
 
         private bool CheckIfMatch(Polygon polygon, Geometry current_polygon, Mode mode)
