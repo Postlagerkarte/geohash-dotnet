@@ -239,8 +239,6 @@ namespace Geohash.Tests
 
             var result = await hasher.GetHashesAsync(polygon, 4, mode: Mode.Contains, progress: progess);
 
-            File.WriteAllLines("contains.txt", result);
-
             Assert.AreEqual(112, result.Count);
 
         }
@@ -263,9 +261,7 @@ namespace Geohash.Tests
 
             var result = await hasher.GetHashesAsync(polygon, 4, mode: Mode.Intersect, progress: progess);
 
-            File.WriteAllLines("contains.txt", result);
-
-            Assert.AreEqual(112, result.Count);
+            Assert.AreEqual(183, result.Count);
 
         }
 
@@ -281,8 +277,8 @@ namespace Geohash.Tests
             var p7 = new Coordinate() { Y = 14.87548828125, X = 51.05520733858494 };
 
 
-
             var polygon = geometryFactory.CreatePolygon(new[] { p1, p2, p3, p4, p5, p6, p7, p1 });
+
             return polygon;
         }
     }
