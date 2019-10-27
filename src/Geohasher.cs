@@ -7,6 +7,9 @@ using System.Threading.Tasks;
 
 namespace Geohash
 {
+    /// <summary>
+    /// Geohasher 
+    /// </summary>
     public class Geohasher
     {
         private char[] base32Chars = "0123456789bcdefghjkmnpqrstuvwxyz".ToCharArray();
@@ -111,7 +114,7 @@ namespace Geohash
             if (String.IsNullOrEmpty(geohash)) throw new ArgumentNullException("geohash");
             if (geohash.Length > 12) throw new ArgumentException("geohash length > 12");
 
-            double[] bbox = DecodeAsBox(geohash);
+            double[] bbox = GetBoundingBox(geohash);
 
             double latitude = (bbox[0] + bbox[1]) / 2;
             double longitude = (bbox[2] + bbox[3]) / 2;
@@ -158,58 +161,14 @@ namespace Geohash
         }
 
         /// <summary>
-        /// 
+        /// returns the bounding box for the given geoash
         /// </summary>
-        /// <param name="geohash">geohash for which to get the bounding box.</param>
-        /// <returns>Envelope representing the bounding box.</returns>
-        public Envelope GetBoundingBox(string geohash)
+        /// <param name="geohash">geohash for which to get the bounding box</param>
+        /// <returns>bounding box as double[] containing latInterval[0], latInterval[1], lonInterval[0], lonInterval[1]</returns>
+        public double[] GetBoundingBox(string geohash)
         {
             ValidateGeohash(geohash);
-            var bbox = DecodeAsBox(geohash);
 
-            return new Envelope(bbox[0], bbox[1], bbox[2], bbox[3]);
-        }
-
-        public async Task<List<string>> GetHashesAsync(Polygon polygon, int precision = 6, Mode mode = Mode.Contains, IProgress<HashingProgress> progress = null)
-        {
-            return await new PolygonHasher().GetHashesAsync(polygon, precision, mode, progress);
-        }
-
-
-        private static void ValidateGeohash(string geohash)
-        {
-            if (String.IsNullOrEmpty(geohash)) throw new ArgumentNullException("geohash");
-            if (geohash.Length > 12) throw new ArgumentException("geohash length > 12");
-        }
-
-        private Dictionary<Direction, string> CreateNeighbors(string geohash)
-        {
-            var result = new Dictionary<Direction, string>();
-            result.Add(Direction.North, North(geohash));
-            result.Add(Direction.NorthWest, West(result[Direction.North]));
-            result.Add(Direction.NorthEast, East(result[Direction.North]));
-            result.Add(Direction.East, East(geohash));
-            result.Add(Direction.South, South(geohash));
-            result.Add(Direction.SouthWest, West(result[Direction.South]));
-            result.Add(Direction.SouthEast, East(result[Direction.South]));
-            result.Add(Direction.West, West(geohash));
-            return result;
-        }
-
-        private void Validate(double latitude, double longitude)
-        {
-            if (latitude < -90.0 || latitude > 90.0)
-            {
-                throw new ArgumentException("Latitude " + latitude + " is outside valid range of [-90,90]");
-            }
-            if (longitude < -180.0 || longitude > 180.0)
-            {
-                throw new ArgumentException("Longitude " + longitude + " is outside valid range of [-180,180]");
-            }
-        }
-
-        public double[] DecodeAsBox(string geohash)
-        {
             double[] latInterval = { -90.0, 90.0 };
             double[] lonInterval = { -180.0, 180.0 };
 
@@ -254,9 +213,56 @@ namespace Geohash
         }
 
 
+        /// <summary>
+        /// Return Hashes for a given polygon
+        /// </summary>
+        /// <param name="polygon">Polygon for which to create hashes</param>
+        /// <param name="precision">Precision of the hashes, defaults to 6</param>
+        /// <param name="mode">Fill Mode for the hashes</param>
+        /// <param name="progress">Allows reporting progress</param>
+        /// <returns></returns>
+        public async Task<List<string>> GetHashesAsync(Polygon polygon, int precision = 6, Mode mode = Mode.Contains, IProgress<HashingProgress> progress = null)
+        {
+            return await new PolygonHasher().GetHashesAsync(polygon, precision, mode, progress);
+        }
+
+        private static void ValidateGeohash(string geohash)
+        {
+            if (String.IsNullOrEmpty(geohash)) throw new ArgumentNullException("geohash");
+            if (geohash.Length > 12) throw new ArgumentException("geohash length > 12");
+        }
+
+        private Dictionary<Direction, string> CreateNeighbors(string geohash)
+        {
+            var result = new Dictionary<Direction, string>();
+            result.Add(Direction.North, North(geohash));
+            result.Add(Direction.NorthWest, West(result[Direction.North]));
+            result.Add(Direction.NorthEast, East(result[Direction.North]));
+            result.Add(Direction.East, East(geohash));
+            result.Add(Direction.South, South(geohash));
+            result.Add(Direction.SouthWest, West(result[Direction.South]));
+            result.Add(Direction.SouthEast, East(result[Direction.South]));
+            result.Add(Direction.West, West(geohash));
+            return result;
+        }
+
+        private void Validate(double latitude, double longitude)
+        {
+            if (latitude < -90.0 || latitude > 90.0)
+            {
+                throw new ArgumentException("Latitude " + latitude + " is outside valid range of [-90,90]");
+            }
+            if (longitude < -180.0 || longitude > 180.0)
+            {
+                throw new ArgumentException("Longitude " + longitude + " is outside valid range of [-180,180]");
+            }
+        }
+
+
+
         private string South(string geoHash)
         {
-            double[] bbox = DecodeAsBox(geoHash);
+            double[] bbox = GetBoundingBox(geoHash);
             double latDiff = bbox[1] - bbox[0];
             double lat = bbox[0] - latDiff / 2;
             double lon = (bbox[2] + bbox[3]) / 2;
@@ -272,7 +278,7 @@ namespace Geohash
 
         private string North(string geoHash)
         {
-            double[] bbox = DecodeAsBox(geoHash);
+            double[] bbox = GetBoundingBox(geoHash);
             double latDiff = bbox[1] - bbox[0];
             double lat = bbox[1] + latDiff / 2;
 
@@ -287,7 +293,7 @@ namespace Geohash
 
         private string West(string geoHash)
         {
-            double[] bbox = DecodeAsBox(geoHash);
+            double[] bbox = GetBoundingBox(geoHash);
             double lonDiff = bbox[3] - bbox[2];
             double lat = (bbox[0] + bbox[1]) / 2;
             double lon = bbox[2] - lonDiff / 2;
@@ -305,7 +311,7 @@ namespace Geohash
 
         private string East(string geoHash)
         {
-            double[] bbox = DecodeAsBox(geoHash);
+            double[] bbox = GetBoundingBox(geoHash);
             double lonDiff = bbox[3] - bbox[2];
             double lat = (bbox[0] + bbox[1]) / 2;
             double lon = bbox[3] + lonDiff / 2;
@@ -322,6 +328,4 @@ namespace Geohash
             return Encode(lat, lon, geoHash.Length);
         }
     }
-
-
 }

@@ -19,10 +19,7 @@ namespace Geohash
 
         private Geometry GeohashToPolygon(string geohash)
         {
-
-
-
-            var corners = geohasher.DecodeAsBox(geohash);
+            var corners = geohasher.GetBoundingBox(geohash);
 
             var coordinates = new Coordinate[]
             {
@@ -97,43 +94,8 @@ namespace Geohash
 
             var res = processedHashes.Where(x => x.Value == true).Select(x => x.Key).ToList();
 
-
-            
             return res;
-            //while (queuedHashes.Count > 0)
-            //{
-            //    var current_geohash = queuedHashes.Dequeue();
 
-            //    progress?.Report(new HashingProgress() { QueueSize = queuedHashes.Count, HashesProcessed = processedHashes.Count, RunningSince = startTime });
-
-            //    if (!processedHashes.ContainsKey(current_geohash))
-            //    {
-            //        var current_polygon = GeohashToPolygon(current_geohash);
-
-            //        if (envelope.Intersects(current_polygon))
-            //        {
-            //            if (CheckIfMatch(polygon, current_polygon, mode))
-            //            {
-            //                processedHashes.Add(current_geohash, true);
-            //            }
-            //            else
-            //            {
-            //                processedHashes.Add(current_geohash, false);
-            //            }
-
-            //            foreach (var neighborHash in geohasher.GetNeighbors(current_geohash).Values)
-            //            {
-            //                if (!processedHashes.ContainsKey(neighborHash))
-            //                {
-            //                    queuedHashes.Enqueue(neighborHash);
-            //                }
-            //            }
-            //        }
-            //    }
-            //}
-
-
-            //return processedHashes.Where(x => x.Value == true).Select(x => x.Key).ToList();
         }
 
         private bool CheckIfMatch(Polygon polygon, Geometry current_polygon, Mode mode)
