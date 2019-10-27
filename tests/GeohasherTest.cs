@@ -208,16 +208,74 @@ namespace Geohash.Tests
 
             var progess = new Progress<HashingProgress>();
 
-            progess.ProgressChanged += (e,hp) =>
+            progess.ProgressChanged += (e, hp) =>
             {
                 Debug.WriteLine($"Processed: {hp.HashesProcessed}, Queued: {hp.QueueSize}, Running Since: {hp.RunningSince}");
             };
 
+            Polygon polygon = GetTestPolygon(geometryFactory);
+
+            var result = await hasher.GetHashesAsync(polygon, 6, progress: progess);
+
+            Assert.AreEqual(149180, result.Count);
+
+        }
+
+        [TestMethod]
+        public async System.Threading.Tasks.Task Should_Get_Hashes_For_PolygonAsync_ContaisMode()
+        {
+            var hasher = new Geohasher();
+
+            var geometryFactory = new GeometryFactory();
+
+            var progess = new Progress<HashingProgress>();
+
+            progess.ProgressChanged += (e, hp) =>
+            {
+                Debug.WriteLine($"Processed: {hp.HashesProcessed}, Queued: {hp.QueueSize}, Running Since: {hp.RunningSince}");
+            };
+
+            Polygon polygon = GetTestPolygon(geometryFactory);
+
+            var result = await hasher.GetHashesAsync(polygon, 4, mode: Mode.Contains, progress: progess);
+
+            File.WriteAllLines("contains.txt", result);
+
+            Assert.AreEqual(112, result.Count);
+
+        }
+
+        [TestMethod]
+        public async System.Threading.Tasks.Task Should_Get_Hashes_For_PolygonAsync_IntersectMode()
+        {
+            var hasher = new Geohasher();
+
+            var geometryFactory = new GeometryFactory();
+
+            var progess = new Progress<HashingProgress>();
+
+            progess.ProgressChanged += (e, hp) =>
+            {
+                Debug.WriteLine($"Processed: {hp.HashesProcessed}, Queued: {hp.QueueSize}, Running Since: {hp.RunningSince}");
+            };
+
+            Polygon polygon = GetTestPolygon(geometryFactory);
+
+            var result = await hasher.GetHashesAsync(polygon, 4, mode: Mode.Intersect, progress: progess);
+
+            File.WriteAllLines("contains.txt", result);
+
+            Assert.AreEqual(112, result.Count);
+
+        }
+
+        private static Polygon GetTestPolygon(GeometryFactory geometryFactory)
+        {
             var p1 = new Coordinate() { Y = 14.87548828125, X = 51.05520733858494 };
             var p2 = new Coordinate() { Y = 12.1728515625, X = 50.17689812200107 };
             var p3 = new Coordinate() { Y = 14.26025390625, X = 48.531157010976706 };
             var p4 = new Coordinate() { Y = 15.073242187499998, X = 49.05227025601607 };
-                                        
+
             var p5 = new Coordinate() { Y = 17.02880859375, X = 48.67645370777654 };
             var p6 = new Coordinate() { Y = 18.852539062499996, X = 49.5822260446217 };
             var p7 = new Coordinate() { Y = 14.87548828125, X = 51.05520733858494 };
@@ -225,11 +283,7 @@ namespace Geohash.Tests
 
 
             var polygon = geometryFactory.CreatePolygon(new[] { p1, p2, p3, p4, p5, p6, p7, p1 });
-
-            var result = await hasher.GetHashesAsync(polygon, 6, progress: progess);
-
-            Assert.AreEqual(149180, result.Count);
-
+            return polygon;
         }
     }
 
