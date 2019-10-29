@@ -28,7 +28,7 @@ namespace Geohash.Tests
 
             var compressed = compressor.Compress(list.ToArray());
 
-            Assert.AreEqual(8, compressed.Count);
+            Assert.AreEqual(7, compressed.Count);
         }
 
         [TestMethod]
