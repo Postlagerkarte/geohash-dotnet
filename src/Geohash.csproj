@@ -13,7 +13,7 @@
     <PackageProjectUrl>https://github.com/postlagerkarte/geohash-dotnet</PackageProjectUrl>
     <PackageIconUrl>https://github.com/postlagerkarte/geohash-dotnet/raw/master/icon.png</PackageIconUrl>
     <PackageTags>geohash dotnet core csharp c#</PackageTags>
-    <Version>1.0.3</Version>
+    <Version>1.0.4</Version>
   </PropertyGroup>
 
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|AnyCPU'">
