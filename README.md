@@ -4,8 +4,6 @@ Easy-to-use and feature-rich geohash library
 
 [![Build Status](https://dev.azure.com/postlagerkarte/geohash-dotnet/_apis/build/status/Postlagerkarte.geohash-dotnet?branchName=master)](https://dev.azure.com/postlagerkarte/geohash-dotnet/_build/latest?definitionId=4&branchName=master)
 
-Demo: https://geohash.azurewebsites.net/
-
 
 ### Installation
 
