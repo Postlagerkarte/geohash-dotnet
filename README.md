@@ -1,6 +1,7 @@
 # geohash-dotnet <img src="https://github.com/postlagerkarte/geohash-dotnet/raw/master/icon.png" width="32" height="32" />
 Easy-to-use and feature-rich geohash library 
 
+[![NuGet version (blazor-dragdrop)](https://img.shields.io/nuget/v/geohash-dotnet.svg?style=flat-square)](https://www.nuget.org/packages/geohash-dotnet)
 
 [![Build Status](https://dev.azure.com/postlagerkarte/geohash-dotnet/_apis/build/status/Postlagerkarte.geohash-dotnet?branchName=master)](https://dev.azure.com/postlagerkarte/geohash-dotnet/_build/latest?definitionId=4&branchName=master)
 
