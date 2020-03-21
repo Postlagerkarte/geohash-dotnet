@@ -51,7 +51,7 @@ namespace Geohash
 
             do
             {
-                var tasks = Enumerable.Range(1, queuedHashes.Count).Select(_ =>
+                var tasks = Enumerable.Range(1, queuedHashes.Count > 10 ? 10 : queuedHashes.Count).Select(_ =>
                 {
                     return Task.Factory.StartNew(() =>
                     {
