@@ -4,6 +4,7 @@ using System.Text;
 using System.Linq;
 using NetTopologySuite.Geometries;
 using System.Threading.Tasks;
+using NetTopologySuite.Geometries.Prepared;
 
 namespace Geohash
 {
@@ -212,6 +213,19 @@ namespace Geohash
             return new double[] { latInterval[0], latInterval[1], lonInterval[0], lonInterval[1] };
         }
 
+        /// <summary>
+        /// Return Hashes for a given polygon
+        /// </summary>
+        /// <param name="startingHash">Starting Position, e.g use centroid.x and centroid.y</param>
+        /// <param name="polygon">Polygon for which to create hashes</param>
+        /// <param name="precision">Precision of the hashes, defaults to 6</param>
+        /// <param name="mode">Fill Mode for the hashes</param>
+        /// <param name="progress">Allows reporting progress</param>
+        /// <returns></returns>
+        public List<string> GetHashes(string startingHash, IPreparedGeometry polygon, int precision = 6, Mode mode = Mode.Contains, IProgress<HashingProgress> progress = null)
+        {
+            return new PolygonHasher().GetHashes(startingHash, polygon, precision, mode, progress);
+        }
 
         /// <summary>
         /// Return Hashes for a given polygon
