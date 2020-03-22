@@ -59,7 +59,7 @@ namespace Geohash
                     var current_polygon = GeohashToPolygon(current_geohash);
 
                
-                    if (CheckIfMatch2(polygon, current_polygon, mode))
+                    if (CheckIfMatch(polygon, current_polygon, mode))
                     {
                         processedHashes.Add(current_geohash, true);
 

@@ -227,19 +227,6 @@ namespace Geohash
             return new PolygonHasher().GetHashes(startingHash, polygon, precision, mode, progress);
         }
 
-        /// <summary>
-        /// Return Hashes for a given polygon
-        /// </summary>
-        /// <param name="polygon">Polygon for which to create hashes</param>
-        /// <param name="precision">Precision of the hashes, defaults to 6</param>
-        /// <param name="mode">Fill Mode for the hashes</param>
-        /// <param name="progress">Allows reporting progress</param>
-        /// <returns></returns>
-        public async Task<List<string>> GetHashesAsync(Polygon polygon, int precision = 6, Mode mode = Mode.Contains, IProgress<HashingProgress> progress = null)
-        {
-            return await new PolygonHasher().GetHashesAsync(polygon, precision, mode, progress);
-        }
-
         private static void ValidateGeohash(string geohash)
         {
             if (String.IsNullOrEmpty(geohash)) throw new ArgumentNullException("geohash");
