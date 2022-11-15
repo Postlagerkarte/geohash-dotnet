@@ -24,11 +24,11 @@ namespace Geohash
 
             var coordinates = new Coordinate[]
             {
-                new Coordinate(corners[0], corners[2]),
-                new Coordinate(corners[1], corners[2]),
-                new Coordinate(corners[1], corners[3]),
-                new Coordinate(corners[0], corners[3]),
-                new Coordinate(corners[0], corners[2]),
+                new Coordinate(corners[2], corners[0]),
+                new Coordinate(corners[2], corners[1]),
+                new Coordinate(corners[3], corners[1]),
+                new Coordinate(corners[3], corners[0]),
+                new Coordinate(corners[2], corners[0]),
             };
 
             var geometryFactory = new GeometryFactory();
