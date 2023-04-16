@@ -158,7 +158,7 @@ GeohashCompressor compressor = new GeohashCompressor();
          "tdnu2y", "tdnu2z"
      };
 
- var result = compressor.Compress(input); // Will return tdnu2
+ var result = compressor.Compress(input); // Will return "tdnu2"
 
  ```
 
