@@ -151,11 +151,14 @@ The GeohashCompressor algorithm has a time complexity of O(N^2), where N is the 
 
   ```csharp
 GeohashCompressor compressor = new GeohashCompressor();
-string[] hashes = new string[] { "1234", "1235", "1236", "1237" };
-int minlevel = 2;
-int maxlevel = 4;
+ var input = new[] {
+         "tdnu20", "tdnu21", "tdnu22", "tdnu23", "tdnu24", "tdnu25", "tdnu26", "tdnu27", "tdnu28", "tdnu29",
+         "tdnu2b", "tdnu2c", "tdnu2d", "tdnu2e", "tdnu2f", "tdnu2g", "tdnu2h", "tdnu2j", "tdnu2k", "tdnu2m",
+         "tdnu2n", "tdnu2p", "tdnu2q", "tdnu2r", "tdnu2s", "tdnu2t", "tdnu2u", "tdnu2v", "tdnu2w", "tdnu2x",
+         "tdnu2y", "tdnu2z"
+     };
 
-List<string> compressedHashes = compressor.Compress(hashes, minlevel, maxlevel)
+ var result = compressor.Compress(input); // Will return tdnu2
 
  ```
 
