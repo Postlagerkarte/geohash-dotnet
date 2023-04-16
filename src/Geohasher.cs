@@ -1,55 +1,60 @@
 ﻿using System;
 using System.Collections.Generic;
-using System.Text;
 using System.Linq;
-using NetTopologySuite.Geometries;
-using System.Threading.Tasks;
-using NetTopologySuite.Geometries.Prepared;
+using System.Text;
 
 namespace Geohash
 {
     /// <summary>
-    /// Geohasher 
+    /// Provides methods for encoding, decoding, and working with geohashes.
     /// </summary>
     public class Geohasher
     {
-        private char[] base32Chars = "0123456789bcdefghjkmnpqrstuvwxyz".ToCharArray();
-
-        private int[] bits= { 16, 8, 4, 2, 1 };
+        private static readonly char[] base32Chars = "0123456789bcdefghjkmnpqrstuvwxyz".ToCharArray();
+        private static readonly int[] bits = { 16, 8, 4, 2, 1 };
 
         /// <summary>
-        /// Encodes coordinates to a geohash string.
+        /// Encodes the latitude and longitude into a geohash string by converting the coordinates
+        /// into binary representations and interleaving them, then converting the combined binary
+        /// sequence into a base32-encoded string. The length of the geohash determines the precision
+        /// of the encoded location.
         /// </summary>
-        /// <param name="latitude">latitude</param>
-        /// <param name="longitude">longitude</param>
-        /// <param name="precision">Length of the geohash. Must be between 1 and 12. Defaults to 6.</param>
-        /// <returns>The created geoash for the given coordinates.</returns>
+        /// <param name="latitude">The latitude coordinate.</param>
+        /// <param name="longitude">The longitude coordinate.</param>
+        /// <param name="precision">The length of the geohash. Must be between 1 and 12. Defaults to 6.</param>
+        /// <returns>The created geohash for the given coordinates.</returns>
         public string Encode(double latitude, double longitude, int precision = 6)
         {
+            // Validate input coordinates.
             Validate(latitude, longitude);
 
+            // Validate precision value.
             if (precision < 1 || precision > 12)
             {
-                throw new ArgumentException("precision must be between 1 and 12");
+                throw new ArgumentException("Precision must be between 1 and 12");
             }
 
+            // Initialize latitude and longitude intervals.
             double[] latInterval = { -90.0, 90.0 };
             double[] lonInterval = { -180.0, 180.0 };
 
+            // Initialize a StringBuilder to store the geohash.
             var geohash = new StringBuilder();
             bool isEven = true;
             int bit = 0;
             int ch = 0;
 
+            // Loop until the desired geohash length is reached.
             while (geohash.Length < precision)
             {
                 double mid;
 
+                // If it's an even iteration, adjust longitude interval and character value.
                 if (isEven)
                 {
                     mid = (lonInterval[0] + lonInterval[1]) / 2;
 
-                    if (longitude > mid)
+                    if (longitude >= mid)
                     {
                         ch |= bits[bit];
                         lonInterval[0] = mid;
@@ -58,13 +63,13 @@ namespace Geohash
                     {
                         lonInterval[1] = mid;
                     }
-
                 }
+                // If it's an odd iteration, adjust latitude interval and character value.
                 else
                 {
                     mid = (latInterval[0] + latInterval[1]) / 2;
 
-                    if (latitude > mid)
+                    if (latitude >= mid)
                     {
                         ch |= bits[bit];
                         latInterval[0] = mid;
@@ -75,8 +80,10 @@ namespace Geohash
                     }
                 }
 
+                // Toggle isEven flag.
                 isEven = !isEven;
 
+                // Increment bit index or reset and append character to geohash.
                 if (bit < 4)
                 {
                     bit++;
@@ -93,34 +100,37 @@ namespace Geohash
         }
 
         /// <summary>
-        /// Return the 32 subhashes for the given geohash string.
+        /// Returns the 32 subhashes for the given geohash string.
         /// </summary>
-        /// <param name="geohash">geohash for which to get the subhashes.</param>
-        /// <returns>subhashes</returns>
+        /// <param name="geohash">Geohash for which to get the subhashes.</param>
+        /// <returns>An array of subhashes.</returns>
         public string[] GetSubhashes(string geohash)
         {
-            if (String.IsNullOrEmpty(geohash)) throw new ArgumentNullException("geohash");
-            if (geohash.Length > 11) throw new ArgumentException("geohash length must be < 12");
+            if (String.IsNullOrEmpty(geohash)) throw new ArgumentNullException(nameof(geohash));
+            if (geohash.Length > 12) throw new ArgumentException("geohash length must be <= 12");
 
             return base32Chars.Select(x => $"{geohash}{x}").ToArray();
         }
 
+
         /// <summary>
         /// Decodes a geohash to the corresponding coordinates.
         /// </summary>
-        /// <param name="geohash">geohash for which to get the coordinates</param>
-        /// <returns>Tuple with latitude and longitude</returns>
-        public Tuple<double, double> Decode(string geohash)
+        /// <param name="geohash">Geohash for which to get the coordinates.</param>
+        /// <returns>ValueTuple with latitude and longitude.</returns>
+        public (double latitude, double longitude) Decode(string geohash)
         {
-            if (String.IsNullOrEmpty(geohash)) throw new ArgumentNullException("geohash");
-            if (geohash.Length > 12) throw new ArgumentException("geohash length > 12");
+            // Validate the input geohash.
+            ValidateGeohash(geohash);
 
-            double[] bbox = GetBoundingBox(geohash);
+            // Get the bounding box of the geohash.
+            BoundingBox bbox = GetBoundingBox(geohash);
 
-            double latitude = (bbox[0] + bbox[1]) / 2;
-            double longitude = (bbox[2] + bbox[3]) / 2;
+            // Calculate the center of the bounding box as the resulting coordinates.
+            double latitude = (bbox.MinLat + bbox.MaxLat) / 2;
+            double longitude = (bbox.MinLng + bbox.MaxLng) / 2;
 
-            return Tuple.Create(latitude, longitude);
+            return (latitude, longitude);
         }
 
 
@@ -132,8 +142,8 @@ namespace Geohash
         /// <returns>geohash</returns>
         public string GetNeighbor(string geohash, Direction direction)
         {
-            if (String.IsNullOrEmpty(geohash)) throw new ArgumentNullException("geohash");
-            if (geohash.Length > 12) throw new ArgumentException("geohash length > 12");
+            if (String.IsNullOrEmpty(geohash)) throw new ArgumentNullException(nameof(geohash));
+            if (geohash.Length > 12) throw new ArgumentException($"{nameof(geohash)} length > 12");
             var neighbors = CreateNeighbors(geohash);
             return neighbors[direction];
         }
@@ -143,10 +153,10 @@ namespace Geohash
         /// </summary>
         /// <param name="geohash">geohash for which to find the neighbors</param>
         /// <returns>Dictionary with direction and geohash</returns>
-        public Dictionary<Direction,string> GetNeighbors(string geohash)
+        public Dictionary<Direction, string> GetNeighbors(string geohash)
         {
-            if (String.IsNullOrEmpty(geohash)) throw new ArgumentNullException("geohash");
-            if (geohash.Length > 12) throw new ArgumentException("geohash length > 12");
+            if (String.IsNullOrEmpty(geohash)) throw new ArgumentNullException(nameof(geohash));
+            if (geohash.Length > 12) throw new ArgumentException($"{nameof(geohash)} length > 12");
             return CreateNeighbors(geohash);
         }
 
@@ -162,26 +172,31 @@ namespace Geohash
         }
 
         /// <summary>
-        /// returns the bounding box for the given geoash
+        /// Calculates the bounding box for the given geohash.
         /// </summary>
-        /// <param name="geohash">geohash for which to get the bounding box</param>
-        /// <returns>bounding box as double[] containing latInterval[0], latInterval[1], lonInterval[0], lonInterval[1]</returns>
-        public double[] GetBoundingBox(string geohash)
+        /// <param name="geohash">Geohash for which to get the bounding box.</param>
+        /// <returns>A BoundingBox object representing the latitude and longitude intervals of the geohash.</returns>
+        public BoundingBox GetBoundingBox(string geohash)
         {
+            // Validate the input geohash.
             ValidateGeohash(geohash);
 
+            // Initialize latitude and longitude intervals.
             double[] latInterval = { -90.0, 90.0 };
             double[] lonInterval = { -180.0, 180.0 };
 
+            // Process each character in the geohash string.
             bool isEven = true;
             for (int i = 0; i < geohash.Length; i++)
             {
-
                 int currentCharacter = Array.IndexOf(base32Chars, geohash[i]);
 
+                // Process each bit in the character.
                 for (int z = 0; z < bits.Length; z++)
                 {
                     int mask = bits[z];
+
+                    // Update the longitude interval if the current bit is even.
                     if (isEven)
                     {
                         if ((currentCharacter & mask) != 0)
@@ -192,11 +207,10 @@ namespace Geohash
                         {
                             lonInterval[1] = (lonInterval[0] + lonInterval[1]) / 2;
                         }
-
                     }
+                    // Update the latitude interval if the current bit is odd.
                     else
                     {
-
                         if ((currentCharacter & mask) != 0)
                         {
                             latInterval[0] = (latInterval[0] + latInterval[1]) / 2;
@@ -206,33 +220,41 @@ namespace Geohash
                             latInterval[1] = (latInterval[0] + latInterval[1]) / 2;
                         }
                     }
+                    // Toggle the isEven flag for the next bit.
                     isEven = !isEven;
                 }
             }
 
-            return new double[] { latInterval[0], latInterval[1], lonInterval[0], lonInterval[1] };
+            // Return the resulting bounding box.
+            return new BoundingBox
+            {
+                MinLat = latInterval[0],
+                MaxLat = latInterval[1],
+                MinLng = lonInterval[0],
+                MaxLng = lonInterval[1]
+            };
         }
 
         /// <summary>
-        /// Return Hashes for a given polygon
+        /// Validates the input geohash string.
         /// </summary>
-        /// <param name="startingHash">Starting Position, e.g use centroid.x and centroid.y</param>
-        /// <param name="polygon">Polygon for which to create hashes</param>
-        /// <param name="precision">Precision of the hashes, defaults to 6</param>
-        /// <param name="mode">Fill Mode for the hashes</param>
-        /// <param name="progress">Allows reporting progress</param>
-        /// <returns></returns>
-        public List<string> GetHashes(string startingHash, IPreparedGeometry polygon, int precision = 6, Mode mode = Mode.Contains, IProgress<HashingProgress> progress = null)
-        {
-            return new PolygonHasher().GetHashes(startingHash, polygon, precision, mode, progress);
-        }
-
+        /// <param name="geohash">Geohash to validate.</param>
         private static void ValidateGeohash(string geohash)
         {
             if (String.IsNullOrEmpty(geohash)) throw new ArgumentNullException("geohash");
             if (geohash.Length > 12) throw new ArgumentException("geohash length > 12");
+
+            foreach (var ch in geohash)
+            {
+                if (!base32Chars.Contains(ch)) throw new ArgumentException("Invalid character in geohash", nameof(geohash));
+            }
         }
 
+        /// <summary>
+        /// Creates neighbors for a given geohash.
+        /// </summary>
+        /// <param name="geohash">geohash for which to create the neighbors</param>
+        /// <returns>Dictionary with direction and geohash</returns>
         private Dictionary<Direction, string> CreateNeighbors(string geohash)
         {
             var result = new Dictionary<Direction, string>();
@@ -259,45 +281,45 @@ namespace Geohash
             }
         }
 
-
-
+        // Returns the geohash for the location directly south of the given geohash
         private string South(string geoHash)
         {
-            double[] bbox = GetBoundingBox(geoHash);
-            double latDiff = bbox[1] - bbox[0];
-            double lat = bbox[0] - latDiff / 2;
-            double lon = (bbox[2] + bbox[3]) / 2;
+            BoundingBox bbox = GetBoundingBox(geoHash);
+            double latDiff = bbox.MaxLat - bbox.MinLat;
+            double lat = bbox.MinLat - latDiff / 2;
+            double lon = (bbox.MinLng + bbox.MaxLng) / 2;
 
             if (lat < -90)
             {
                 lat = (-90 + (-90 - lat)) * -1;
             }
 
-
             return Encode(lat, lon, geoHash.Length);
         }
 
+        // Returns the geohash for the location directly north of the given geohash
         private string North(string geoHash)
         {
-            double[] bbox = GetBoundingBox(geoHash);
-            double latDiff = bbox[1] - bbox[0];
-            double lat = bbox[1] + latDiff / 2;
+            BoundingBox bbox = GetBoundingBox(geoHash);
+            double latDiff = bbox.MaxLat - bbox.MinLat;
+            double lat = bbox.MaxLat + latDiff / 2;
 
             if (lat > 90)
             {
-                lat = (90 - (lat - 90)) * -1; 
+                lat = (90 - (lat - 90)) * -1;
             }
 
-            double lon = (bbox[2] + bbox[3]) / 2;
+            double lon = (bbox.MinLng + bbox.MaxLng) / 2;
             return Encode(lat, lon, geoHash.Length);
         }
 
+        // Returns the geohash for the location directly west of the given geohash
         private string West(string geoHash)
         {
-            double[] bbox = GetBoundingBox(geoHash);
-            double lonDiff = bbox[3] - bbox[2];
-            double lat = (bbox[0] + bbox[1]) / 2;
-            double lon = bbox[2] - lonDiff / 2;
+            BoundingBox bbox = GetBoundingBox(geoHash);
+            double lonDiff = bbox.MaxLng - bbox.MinLng;
+            double lat = (bbox.MinLat + bbox.MaxLat) / 2;
+            double lon = bbox.MinLng - lonDiff / 2;
             if (lon < -180)
             {
                 lon = 180 - (lon + 180);
@@ -310,12 +332,13 @@ namespace Geohash
             return Encode(lat, lon, geoHash.Length);
         }
 
+        // Returns the geohash for the location directly east of the given geohash
         private string East(string geoHash)
         {
-            double[] bbox = GetBoundingBox(geoHash);
-            double lonDiff = bbox[3] - bbox[2];
-            double lat = (bbox[0] + bbox[1]) / 2;
-            double lon = bbox[3] + lonDiff / 2;
+            BoundingBox bbox = GetBoundingBox(geoHash);
+            double lonDiff = bbox.MaxLng - bbox.MinLng;
+            double lat = (bbox.MinLat + bbox.MaxLat) / 2;
+            double lon = bbox.MaxLng + lonDiff / 2;
 
             if (lon > 180)
             {
@@ -329,4 +352,5 @@ namespace Geohash
             return Encode(lat, lon, geoHash.Length);
         }
     }
+
 }

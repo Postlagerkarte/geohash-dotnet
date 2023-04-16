@@ -1,106 +1,102 @@
 ﻿using NetTopologySuite.Geometries;
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.ComponentModel;
-using System.Linq;
-using System.Text;
-using System.Collections.Concurrent;
-using System.Threading.Tasks;
-using System.Threading;
 using System.Diagnostics;
-using NetTopologySuite.Geometries.Prepared;
+using System.Linq;
+using System.Threading.Tasks;
 
 namespace Geohash
 {
-    internal class PolygonHasher
+    /// <summary>
+    /// Provides functionality to generate geohashes within a polygon based on the specified precision and inclusion criteria.
+    /// </summary>
+    public class PolygonHasher
     {
+        // Create a Geohasher instance for encoding and decoding geohashes
+        private Geohasher _geohasher = new Geohasher();
 
-
-        private Geohasher geohasher = new Geohasher();
-
-        private Geometry GeohashToPolygon(string geohash)
+        /// <summary>
+        /// Specifies the criteria used to determine if a geohash should be included in the result set.
+        /// </summary>
+        public enum GeohashInclusionCriteria
         {
-            var corners = geohasher.GetBoundingBox(geohash);
+            /// <summary>
+            /// Include geohashes that are entirely contained within the input polygon.
+            /// </summary>
+            Contains,
 
-            var coordinates = new Coordinate[]
-            {
-                new Coordinate(corners[0], corners[2]),
-                new Coordinate(corners[1], corners[2]),
-                new Coordinate(corners[1], corners[3]),
-                new Coordinate(corners[0], corners[3]),
-                new Coordinate(corners[0], corners[2]),
-            };
-
-            var geometryFactory = new GeometryFactory();
-
-            return geometryFactory.CreatePolygon(coordinates);
-
+            /// <summary>
+            /// Include geohashes that intersect the input polygon, even partially.
+            /// </summary>
+            Intersects
         }
 
-        public List<string> GetHashes(string startingHash, IPreparedGeometry polygon, int precision, Mode mode, IProgress<HashingProgress> progress = null)
+        /// <summary>
+        /// Get the geohashes of the specified precision that meet the specified inclusion criteria with the input polygon.
+        /// </summary>
+        /// <param name="polygon">The input polygon.</param>
+        /// <param name="geohashPrecision">The desired geohash precision.</param>
+        /// <param name="geohashInclusionCriteria">The criteria for including geohashes in the result set.</param>
+        /// <returns>A HashSet containing the geohashes that meet the specified inclusion criteria with the input polygon.</returns>
+        public HashSet<string> GetHashes(Polygon polygon, int geohashPrecision, GeohashInclusionCriteria geohashInclusionCriteria = GeohashInclusionCriteria.Intersects)
         {
+            // Get the bounding box of the input polygon
+            var envelope = polygon.EnvelopeInternal;
+            double minx = envelope.MinX;
+            double miny = envelope.MinY;
+            double maxx = envelope.MaxX;
+            double maxy = envelope.MaxY;
 
-            var startTime = Stopwatch.StartNew();
+            // Set latitude and longitude step sizes based on the bounding box
+            double latStep = (maxy - miny) / 100;
+            double lonStep = (maxx - minx) / 100;
 
-            var queuedHashes = new Queue<string>();
-            var processedHashes = new Dictionary<string, bool>();
+            // Initialize a HashSet to store the geohashes inside the bounding box
+            var geohashes = new HashSet<string>();
 
-            //starting hash
-            queuedHashes.Enqueue(startingHash);
-
-            while (queuedHashes.Count > 0)
+            // Generate geohashes inside the bounding box
+            double lat = miny;
+            while (lat <= maxy)
             {
-                var current_geohash = queuedHashes.Dequeue();
-
-                progress?.Report(new HashingProgress() { QueueSize = queuedHashes.Count, HashesProcessed = processedHashes.Count, RunningSince = startTime.Elapsed });
-
-                if (!processedHashes.ContainsKey(current_geohash))
+                double lon = minx;
+                while (lon <= maxx)
                 {
-                    var current_polygon = GeohashToPolygon(current_geohash);
+                    // Encode the current latitude and longitude to a geohash
+                    string curGeohash = _geohasher.Encode(lat, lon, geohashPrecision);
 
-               
-                    if (CheckIfMatch(polygon, current_polygon, mode))
+                    // Get the bounding box of the current geohash
+                    var bbox = _geohasher.GetBoundingBox(curGeohash);
+
+                    // Create a polygon from the bounding box coordinates
+                    var geohashPoly = new Polygon(new LinearRing(new Coordinate[] {
+                        new Coordinate(bbox.MinLng, bbox.MinLat),
+                        new Coordinate(bbox.MinLng, bbox.MaxLat),
+                        new Coordinate(bbox.MaxLng, bbox.MaxLat),
+                        new Coordinate(bbox.MaxLng, bbox.MinLat),
+                        new Coordinate(bbox.MinLng, bbox.MinLat) // Close the ring
+                    }));
+
+                    // Check if the input polygon intersects the geohash polygon
+                    if (geohashInclusionCriteria == GeohashInclusionCriteria.Contains && polygon.Contains(geohashPoly) ||
+                       geohashInclusionCriteria == GeohashInclusionCriteria.Intersects && polygon.Intersects(geohashPoly))
                     {
-                        processedHashes.Add(current_geohash, true);
-
-                        foreach (var neighborHash in geohasher.GetNeighbors(current_geohash).Values)
-                        {
-
-                            if (!processedHashes.ContainsKey(neighborHash))
-                            {
-                                queuedHashes.Enqueue(neighborHash);
-                            }
-                        }
-                    }
-                    else
-                    {
-                        processedHashes.Add(current_geohash, false);
+                        // If the polygons intersect, add the geohash to the HashSet
+                        geohashes.Add(curGeohash);
                     }
 
-         
-                    
+                    // Increment the longitude by the step size
+                    lon += lonStep;
                 }
+
+                // Increment the latitude by the step size
+                lat += latStep;
             }
 
-
-            return processedHashes.Where(x => x.Value == true).Select(x => x.Key).ToList();
+            // Return the geohashes that intersect the input polygon
+            return geohashes;
         }
-
-
-        private bool CheckIfMatch(IPreparedGeometry polygon, Geometry current_polygon, Mode mode)
-        {
-            if (mode == Mode.Intersect)
-            {
-                return polygon.Intersects(current_polygon);
-            }
-
-            if (mode == Mode.Contains)
-            {
-                return polygon.Contains(current_polygon);
-            }
-
-            throw new InvalidEnumArgumentException("unkown mode");
-        }
-
     }
+
 }
