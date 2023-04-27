@@ -12,7 +12,8 @@ To use the geohash library in your projects run the following command in the Pac
  ```
   Install-Package geohash-dotnet
  ```
- [![NuGet version (blazor-dragdrop)](https://img.shields.io/nuget/v/geohash-dotnet.svg?style=flat-square)](https://www.nuget.org/packages/geohash-dotnet)
+[![NuGet version (blazor-dragdrop)](https://img.shields.io/nuget/v/geohash-dotnet.svg?style=flat-square)](https://www.nuget.org/packages/geohash-dotnet) [![Nuget](https://img.shields.io/nuget/dt/geohash-dotnet)](https://www.nuget.org/packages/geohash-dotnet)
+
  
  
 ## Getting Started
