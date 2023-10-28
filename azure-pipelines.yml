@@ -14,9 +14,6 @@ variables:
   buildPlatform: 'Any CPU'
   buildConfiguration: 'Release'
 
-steps:
-- task: NuGetToolInstaller@1
-
 - task: DotNetCoreCLI@2
   displayName: Build
   inputs:
@@ -31,14 +28,4 @@ steps:
     projects: '**/*Tests*.csproj'
     arguments: '--configuration $(buildConfiguration)'
 
-- task: NuGetCommand@2
-  inputs:
-    command: 'pack'
-    packagesToPack: '**/Geohash.csproj'
-    versioningScheme: 'off'
 
-- task: PublishBuildArtifacts@1
-  inputs:
-    PathtoPublish: '$(Build.ArtifactStagingDirectory)'
-    ArtifactName: 'nuget'
-    publishLocation: 'Container'
