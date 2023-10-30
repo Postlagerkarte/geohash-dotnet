@@ -43,45 +43,63 @@ namespace Geohash
         /// <returns>A HashSet containing the geohashes that meet the specified inclusion criteria with the input polygon.</returns>
         public HashSet<string> GetHashes(Polygon polygon, int geohashPrecision, GeohashInclusionCriteria geohashInclusionCriteria = GeohashInclusionCriteria.Intersects)
         {
+            // Determine the envelope of the polygon.
             var envelope = polygon.EnvelopeInternal;
 
-            double latRange = envelope.MaxY - envelope.MinY;
-            double lngRange = envelope.MaxX - envelope.MinX;
+            // Calculate step size based on geohash precision.
+            double latStep = 180.0 / Math.Pow(2, (5 * geohashPrecision - geohashPrecision % 2) / 2);
+            double lngStep = 180.0 / Math.Pow(2, (5 * geohashPrecision + geohashPrecision % 2) / 2 - 1);
 
-            double baseLatStep = 180 / Math.Pow(2, (5 * geohashPrecision - geohashPrecision % 2) / 2);
-            double baseLngStep = 180 / Math.Pow(2, (5 * geohashPrecision + geohashPrecision % 2) / 2 - 1);
-
-            double latStep = Math.Min(baseLatStep, latRange / 10); // Here, "10" determines the granularity. You can adjust this value.
-            double lngStep = Math.Min(baseLngStep, lngRange / 10);
+            // Expand envelope by half the step size to ensure boundary geohashes are considered.
+            envelope.ExpandBy(latStep / 2, lngStep / 2);
 
             var geohashes = new ConcurrentBag<string>();
 
-            Parallel.ForEach(Enumerable.Range(0, (int)((envelope.MaxY - envelope.MinY) / latStep)), new ParallelOptions { MaxDegreeOfParallelism = Environment.ProcessorCount }, latIndex =>
+            bool checkContains = geohashInclusionCriteria == GeohashInclusionCriteria.Contains;
+            bool checkIntersects = geohashInclusionCriteria == GeohashInclusionCriteria.Intersects;
+
+            // Parallelize the outer latitude loop.
+            Parallel.For((int)(envelope.MinY / latStep), (int)(envelope.MaxY / latStep) + 1, (latIdx) =>
             {
-                double lat = envelope.MinY + latIndex * latStep;
+                double lat = latIdx * latStep;
+                Coordinate[] coords = new Coordinate[5];
+
                 for (double lng = envelope.MinX; lng <= envelope.MaxX; lng += lngStep)
                 {
+                    // Generate a geohash for the latitude-longitude pair.
                     string curGeohash = _geohasher.Encode(lat, lng, geohashPrecision);
-                    var bbox = _geohasher.GetBoundingBox(curGeohash);
-                    var geohashPoly = new Polygon(new LinearRing(new Coordinate[] {
-                        new Coordinate(bbox.MinLng, bbox.MinLat),
-                        new Coordinate(bbox.MinLng, bbox.MaxLat),
-                        new Coordinate(bbox.MaxLng, bbox.MaxLat),
-                        new Coordinate(bbox.MaxLng, bbox.MinLat),
-                        new Coordinate(bbox.MinLng, bbox.MinLat)
-                    }));
 
-                    if (polygon.EnvelopeInternal.Intersects(geohashPoly.EnvelopeInternal) &&
-                        ((geohashInclusionCriteria == GeohashInclusionCriteria.Contains && polygon.Contains(geohashPoly)) ||
-                         (geohashInclusionCriteria == GeohashInclusionCriteria.Intersects && polygon.Intersects(geohashPoly))))
+                    // Get bounding box for geohash and convert to polygon.
+                    var bbox = _geohasher.GetBoundingBox(curGeohash);
+                    coords[0] = new Coordinate(bbox.MinLng, bbox.MinLat);
+                    coords[1] = new Coordinate(bbox.MinLng, bbox.MaxLat);
+                    coords[2] = new Coordinate(bbox.MaxLng, bbox.MaxLat);
+                    coords[3] = new Coordinate(bbox.MaxLng, bbox.MinLat);
+                    coords[4] = coords[0];
+
+                    var geohashPoly = new Polygon(new LinearRing(coords));
+
+                    // Check inclusion criteria.
+                    if ((checkContains && polygon.Contains(geohashPoly)) ||
+                        (checkIntersects && polygon.Intersects(geohashPoly)))
                     {
                         geohashes.Add(curGeohash);
                     }
                 }
             });
 
-            return new HashSet<string>(geohashes);
+            return geohashes.ToHashSet();
         }
-    }
 
+
+
+
+
+
+
+
+
+
+
+    }
 }
