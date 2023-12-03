@@ -6,6 +6,7 @@ using System.Collections.Generic;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace Geohash
@@ -40,26 +41,28 @@ namespace Geohash
         /// <param name="polygon">The input polygon.</param>
         /// <param name="geohashPrecision">The desired geohash precision.</param>
         /// <param name="geohashInclusionCriteria">The criteria for including geohashes in the result set.</param>
+        /// <param name="progress">Allows to report progress</param>
         /// <returns>A HashSet containing the geohashes that meet the specified inclusion criteria with the input polygon.</returns>
-        public HashSet<string> GetHashes(Polygon polygon, int geohashPrecision, GeohashInclusionCriteria geohashInclusionCriteria = GeohashInclusionCriteria.Intersects)
+
+        public HashSet<string> GetHashes(Polygon polygon, int geohashPrecision, GeohashInclusionCriteria geohashInclusionCriteria = GeohashInclusionCriteria.Contains, IProgress<double> progress = null)
         {
-            // Determine the envelope of the polygon.
             var envelope = polygon.EnvelopeInternal;
-
-            // Calculate step size based on geohash precision.
             double latStep = 180.0 / Math.Pow(2, (5 * geohashPrecision - geohashPrecision % 2) / 2);
-            double lngStep = 180.0 / Math.Pow(2, (5 * geohashPrecision + geohashPrecision % 2) / 2 - 1);
-
-            // Expand envelope by half the step size to ensure boundary geohashes are considered.
+            double lngStep = 360.0 / Math.Pow(2, (5 * geohashPrecision + geohashPrecision % 2) / 2);
             envelope.ExpandBy(latStep / 2, lngStep / 2);
 
-            var geohashes = new ConcurrentBag<string>();
-
+            HashSet<string> geohashes = new HashSet<string>();
             bool checkContains = geohashInclusionCriteria == GeohashInclusionCriteria.Contains;
             bool checkIntersects = geohashInclusionCriteria == GeohashInclusionCriteria.Intersects;
 
-            // Parallelize the outer latitude loop.
-            Parallel.For((int)(envelope.MinY / latStep), (int)(envelope.MaxY / latStep) + 1, (latIdx) =>
+            int totalSteps = (int)Math.Ceiling((envelope.MaxY - envelope.MinY) / latStep);
+            int stepsCompleted = 0;
+
+            // Calculate the size of the work batch for progress reporting
+            int progressBatchSize = Math.Max(1, totalSteps / 100);
+
+            Parallel.For((int)(envelope.MinY / latStep), (int)(envelope.MaxY / latStep) + 1, () => new HashSet<string>(),
+            (latIdx, state, localGeohashes) =>
             {
                 double lat = latIdx * latStep;
                 Coordinate[] coords = new Coordinate[5];
@@ -79,27 +82,37 @@ namespace Geohash
 
                     var geohashPoly = new Polygon(new LinearRing(coords));
 
-                    // Check inclusion criteria.
+
                     if ((checkContains && polygon.Contains(geohashPoly)) ||
                         (checkIntersects && polygon.Intersects(geohashPoly)))
                     {
-                        geohashes.Add(curGeohash);
+                        localGeohashes.Add(curGeohash);
+                    }
+                }
+
+                if ((latIdx + 1) % progressBatchSize == 0)
+                {
+                    progress?.Report(Math.Min(1.0, (double)latIdx / totalSteps));
+                }
+
+                return localGeohashes;
+            },
+            (localGeohashes) =>
+            {
+                lock (geohashes)
+                {
+                    foreach (var geohash in localGeohashes)
+                    {
+                        geohashes.Add(geohash);
                     }
                 }
             });
 
-            return geohashes.ToHashSet();
+            // Final progress update to ensure we reach 100% when done
+            progress?.Report(1.0);
+
+            return geohashes;
         }
-
-
-
-
-
-
-
-
-
-
 
     }
 }
