@@ -1,10 +1,12 @@
 ﻿using NetTopologySuite.Geometries;
+using NetTopologySuite.Index.Strtree;
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace Geohash
@@ -39,64 +41,78 @@ namespace Geohash
         /// <param name="polygon">The input polygon.</param>
         /// <param name="geohashPrecision">The desired geohash precision.</param>
         /// <param name="geohashInclusionCriteria">The criteria for including geohashes in the result set.</param>
+        /// <param name="progress">Allows to report progress</param>
         /// <returns>A HashSet containing the geohashes that meet the specified inclusion criteria with the input polygon.</returns>
-        public HashSet<string> GetHashes(Polygon polygon, int geohashPrecision, GeohashInclusionCriteria geohashInclusionCriteria = GeohashInclusionCriteria.Intersects)
+
+        public HashSet<string> GetHashes(Polygon polygon, int geohashPrecision, GeohashInclusionCriteria geohashInclusionCriteria = GeohashInclusionCriteria.Contains, IProgress<double> progress = null)
         {
-            // Get the bounding box of the input polygon
             var envelope = polygon.EnvelopeInternal;
-            double minx = envelope.MinX;
-            double miny = envelope.MinY;
-            double maxx = envelope.MaxX;
-            double maxy = envelope.MaxY;
+            double latStep = 180.0 / Math.Pow(2, (5 * geohashPrecision - geohashPrecision % 2) / 2);
+            double lngStep = 360.0 / Math.Pow(2, (5 * geohashPrecision + geohashPrecision % 2) / 2);
+            envelope.ExpandBy(latStep / 2, lngStep / 2);
 
-            // Set latitude and longitude step sizes based on the bounding box
-            double latStep = (maxy - miny) / 100;
-            double lonStep = (maxx - minx) / 100;
+            HashSet<string> geohashes = new HashSet<string>();
+            bool checkContains = geohashInclusionCriteria == GeohashInclusionCriteria.Contains;
+            bool checkIntersects = geohashInclusionCriteria == GeohashInclusionCriteria.Intersects;
 
-            // Initialize a HashSet to store the geohashes inside the bounding box
-            var geohashes = new HashSet<string>();
+            int totalSteps = (int)Math.Ceiling((envelope.MaxY - envelope.MinY) / latStep);
+            int stepsCompleted = 0;
 
-            // Generate geohashes inside the bounding box
-            double lat = miny;
-            while (lat <= maxy)
+            // Calculate the size of the work batch for progress reporting
+            int progressBatchSize = Math.Max(1, totalSteps / 100);
+
+            Parallel.For((int)(envelope.MinY / latStep), (int)(envelope.MaxY / latStep) + 1, () => new HashSet<string>(),
+            (latIdx, state, localGeohashes) =>
             {
-                double lon = minx;
-                while (lon <= maxx)
+                double lat = latIdx * latStep;
+                Coordinate[] coords = new Coordinate[5];
+
+                for (double lng = envelope.MinX; lng <= envelope.MaxX; lng += lngStep)
                 {
-                    // Encode the current latitude and longitude to a geohash
-                    string curGeohash = _geohasher.Encode(lat, lon, geohashPrecision);
+                    // Generate a geohash for the latitude-longitude pair.
+                    string curGeohash = _geohasher.Encode(lat, lng, geohashPrecision);
 
-                    // Get the bounding box of the current geohash
+                    // Get bounding box for geohash and convert to polygon.
                     var bbox = _geohasher.GetBoundingBox(curGeohash);
+                    coords[0] = new Coordinate(bbox.MinLng, bbox.MinLat);
+                    coords[1] = new Coordinate(bbox.MinLng, bbox.MaxLat);
+                    coords[2] = new Coordinate(bbox.MaxLng, bbox.MaxLat);
+                    coords[3] = new Coordinate(bbox.MaxLng, bbox.MinLat);
+                    coords[4] = coords[0];
 
-                    // Create a polygon from the bounding box coordinates
-                    var geohashPoly = new Polygon(new LinearRing(new Coordinate[] {
-                        new Coordinate(bbox.MinLng, bbox.MinLat),
-                        new Coordinate(bbox.MinLng, bbox.MaxLat),
-                        new Coordinate(bbox.MaxLng, bbox.MaxLat),
-                        new Coordinate(bbox.MaxLng, bbox.MinLat),
-                        new Coordinate(bbox.MinLng, bbox.MinLat) // Close the ring
-                    }));
+                    var geohashPoly = new Polygon(new LinearRing(coords));
 
-                    // Check if the input polygon intersects the geohash polygon
-                    if (geohashInclusionCriteria == GeohashInclusionCriteria.Contains && polygon.Contains(geohashPoly) ||
-                       geohashInclusionCriteria == GeohashInclusionCriteria.Intersects && polygon.Intersects(geohashPoly))
+
+                    if ((checkContains && polygon.Contains(geohashPoly)) ||
+                        (checkIntersects && polygon.Intersects(geohashPoly)))
                     {
-                        // If the polygons intersect, add the geohash to the HashSet
-                        geohashes.Add(curGeohash);
+                        localGeohashes.Add(curGeohash);
                     }
-
-                    // Increment the longitude by the step size
-                    lon += lonStep;
                 }
 
-                // Increment the latitude by the step size
-                lat += latStep;
-            }
+                if ((latIdx + 1) % progressBatchSize == 0)
+                {
+                    progress?.Report(Math.Min(1.0, (double)latIdx / totalSteps));
+                }
 
-            // Return the geohashes that intersect the input polygon
+                return localGeohashes;
+            },
+            (localGeohashes) =>
+            {
+                lock (geohashes)
+                {
+                    foreach (var geohash in localGeohashes)
+                    {
+                        geohashes.Add(geohash);
+                    }
+                }
+            });
+
+            // Final progress update to ensure we reach 100% when done
+            progress?.Report(1.0);
+
             return geohashes;
         }
-    }
 
+    }
 }
