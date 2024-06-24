@@ -1,12 +1,6 @@
 ﻿using NetTopologySuite.Geometries;
-using NetTopologySuite.Index.Strtree;
 using System;
-using System.Collections.Concurrent;
 using System.Collections.Generic;
-using System.ComponentModel;
-using System.Diagnostics;
-using System.Linq;
-using System.Threading;
 using System.Threading.Tasks;
 
 namespace Geohash
