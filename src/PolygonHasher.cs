@@ -16,7 +16,8 @@ namespace Geohash
     /// </summary>
     public class PolygonHasher
     {
-        // Create a Geohasher instance for encoding and decoding geohashes
+        private const int MinGeohashPrecision = 1;
+        private const int MaxGeohashPrecision = 12;
         private Geohasher _geohasher = new Geohasher();
 
         /// <summary>
@@ -46,67 +47,112 @@ namespace Geohash
 
         public HashSet<string> GetHashes(Polygon polygon, int geohashPrecision, GeohashInclusionCriteria geohashInclusionCriteria = GeohashInclusionCriteria.Contains, IProgress<double> progress = null)
         {
+            if (geohashPrecision < MinGeohashPrecision || geohashPrecision > MaxGeohashPrecision)
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(geohashPrecision),
+                    $"Geohash precision must be between {MinGeohashPrecision} and {MaxGeohashPrecision}."
+                );
+            }
+
             var envelope = polygon.EnvelopeInternal;
-            double latStep = 180.0 / Math.Pow(2, (5 * geohashPrecision - geohashPrecision % 2) / 2);
-            double lngStep = 360.0 / Math.Pow(2, (5 * geohashPrecision + geohashPrecision % 2) / 2);
-            envelope.ExpandBy(latStep / 2, lngStep / 2);
+
+            // Calculate the number of bits used for latitude and longitude
+            int totalBits = 5 * geohashPrecision;
+            int numLonBits = (totalBits + 1) / 2; // Integer division
+            int numLatBits = totalBits / 2;       // Integer division
+
+            // Calculate the step sizes for latitude and longitude
+            double latStep = 180.0 / Math.Pow(2, numLatBits);
+            double lngStep = 360.0 / Math.Pow(2, numLonBits);
+
+            // Expand the envelope to cover edge geohashes
+            envelope.ExpandBy(lngStep / 2, latStep / 2);
+
+            // Clamp the envelope to valid latitude and longitude ranges
+            envelope = new Envelope(
+                Math.Max(envelope.MinX, -180.0),
+                Math.Min(envelope.MaxX, 180.0),
+                Math.Max(envelope.MinY, -90.0),
+                Math.Min(envelope.MaxY, 90.0)
+            );
+
 
             HashSet<string> geohashes = new HashSet<string>();
             bool checkContains = geohashInclusionCriteria == GeohashInclusionCriteria.Contains;
             bool checkIntersects = geohashInclusionCriteria == GeohashInclusionCriteria.Intersects;
 
-            int totalSteps = (int)Math.Ceiling((envelope.MaxY - envelope.MinY) / latStep);
-            int stepsCompleted = 0;
+            // Accurate loop index calculation using Math.Floor and Math.Ceiling
+            int startLatIdx = (int)Math.Floor(envelope.MinY / latStep);
+            int endLatIdx = (int)Math.Ceiling(envelope.MaxY / latStep);
+            int startLngIdx = (int)Math.Floor(envelope.MinX / lngStep);
+            int endLngIdx = (int)Math.Ceiling(envelope.MaxX / lngStep);
 
-            // Calculate the size of the work batch for progress reporting
-            int progressBatchSize = Math.Max(1, totalSteps / 100);
+            // Initialize progress reporting variables
+            int totalSteps = endLatIdx - startLatIdx;
+            totalSteps = Math.Max(totalSteps, 1);
 
-            Parallel.For((int)(envelope.MinY / latStep), (int)(envelope.MaxY / latStep) + 1, () => new HashSet<string>(),
-            (latIdx, state, localGeohashes) =>
+            int reportInterval = Math.Max(1, totalSteps / 100); // Report every 1%
+            long currentStep = 0;
+
+            // Use ConcurrentBag for thread-safe collection without explicit locking
+            var concurrentGeohashes = new ConcurrentBag<string>();
+
+            // Use a thread-safe counter for progress
+            object progressLock = new object();
+
+            Parallel.For(startLatIdx, endLatIdx, latIdx =>
             {
                 double lat = latIdx * latStep;
-                Coordinate[] coords = new Coordinate[5];
 
-                for (double lng = envelope.MinX; lng <= envelope.MaxX; lng += lngStep)
+                for (int lngIdx = startLngIdx; lngIdx <= endLngIdx; lngIdx++)
                 {
+                    double lng = lngIdx * lngStep;
+
                     // Generate a geohash for the latitude-longitude pair.
                     string curGeohash = _geohasher.Encode(lat, lng, geohashPrecision);
 
                     // Get bounding box for geohash and convert to polygon.
                     var bbox = _geohasher.GetBoundingBox(curGeohash);
-                    coords[0] = new Coordinate(bbox.MinLng, bbox.MinLat);
-                    coords[1] = new Coordinate(bbox.MinLng, bbox.MaxLat);
-                    coords[2] = new Coordinate(bbox.MaxLng, bbox.MaxLat);
-                    coords[3] = new Coordinate(bbox.MaxLng, bbox.MinLat);
-                    coords[4] = coords[0];
+                    var coords = new Coordinate[]
+                    {
+                        new Coordinate(bbox.MinLng, bbox.MinLat),
+                        new Coordinate(bbox.MinLng, bbox.MaxLat),
+                        new Coordinate(bbox.MaxLng, bbox.MaxLat),
+                        new Coordinate(bbox.MaxLng, bbox.MinLat),
+                        new Coordinate(bbox.MinLng, bbox.MinLat)
+                    };
 
                     var geohashPoly = new Polygon(new LinearRing(coords));
-
 
                     if ((checkContains && polygon.Contains(geohashPoly)) ||
                         (checkIntersects && polygon.Intersects(geohashPoly)))
                     {
-                        localGeohashes.Add(curGeohash);
+                        concurrentGeohashes.Add(curGeohash);
                     }
                 }
 
-                if ((latIdx + 1) % progressBatchSize == 0)
-                {
-                    progress?.Report(Math.Min(1.0, (double)latIdx / totalSteps));
-                }
 
-                return localGeohashes;
-            },
-            (localGeohashes) =>
-            {
-                lock (geohashes)
+                // Update progress
+                if (progress != null)
                 {
-                    foreach (var geohash in localGeohashes)
+                    long step = Interlocked.Increment(ref currentStep);
+
+                    // Report progress at defined intervals or on the last step
+                    if (step % reportInterval == 0 || step == totalSteps)
                     {
-                        geohashes.Add(geohash);
+                        double progressValue = (double)step / totalSteps;
+                        progress.Report(Math.Min(progressValue, 1.0));
                     }
                 }
+
             });
+
+            // Transfer geohashes from ConcurrentBag to HashSet
+            foreach (var gh in concurrentGeohashes)
+            {
+                geohashes.Add(gh);
+            }
 
             // Final progress update to ensure we reach 100% when done
             progress?.Report(1.0);
