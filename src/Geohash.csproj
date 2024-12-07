@@ -13,7 +13,7 @@
     <PackageProjectUrl>https://github.com/postlagerkarte/geohash-dotnet</PackageProjectUrl>
     <PackageIconUrl>https://github.com/postlagerkarte/geohash-dotnet/raw/master/icon.png</PackageIconUrl>
     <PackageTags>geohash dotnet core csharp c#</PackageTags>
-    <Version>2.1.0</Version>
+    <Version>2.2.0</Version>
   </PropertyGroup>
 
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|AnyCPU'">
@@ -21,6 +21,10 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="coverlet.collector" Version="6.0.2">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
     <PackageReference Include="NetTopologySuite" Version="2.5.0" />
   </ItemGroup>
 

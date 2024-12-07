@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using Xunit;
 
@@ -74,7 +75,7 @@ namespace Geohash.Tests
         }
 
         [Fact]
-        public async Task GetHashes_ReportsProgressCorrectly()
+        public async Task Should_Report_Progress_Correctly()
         {
             // Arrange
             var polygonHasher = new PolygonHasher();
@@ -108,10 +109,59 @@ namespace Geohash.Tests
 
             // Assert
             Assert.NotEmpty(progressList); // Ensure that progress was reported
+            Assert.True(progressList.Count > 1); // Ensure we have at least one progress report
             Assert.Contains(progressList, p => p >= 0 && p <= 1); // Progress should be between 0 and 1
             Assert.Equal(1, progressList[^1]); // Last progress report should be 100
         }
 
+
+
+        [Fact]
+        public void Should_Not_Crash_When_ProgressReporting()
+        {
+            // Arrange
+            // Define a polygon with a very small area to ensure small totalSteps
+            var coordinates = new Coordinate[]
+            {
+                new Coordinate(0.0, 0.0),
+                new Coordinate(0.0, 0.0001),
+                new Coordinate(0.0001, 0.0001),
+                new Coordinate(0.0001, 0.0),
+                new Coordinate(0.0, 0.0)
+            };
+            var polygon = new Polygon(new LinearRing(coordinates));
+
+            int precision = 8; // High precision leading to small steps
+            var progressList = new List<double>();
+            var progressCompleted = new ManualResetEventSlim(false);
+            var progressReporter = new Progress<double>(progress =>
+            {
+                progressList.Add(progress);
+
+                // Signal completion when progress reaches 1.0
+                if (progress >= 1.0)
+                {
+                    progressCompleted.Set();
+                }
+            });
+
+            // Act
+            var resultGeohashes = _polygonHasher.GetHashes(
+                polygon,
+                precision,
+                PolygonHasher.GeohashInclusionCriteria.Contains,
+                progressReporter
+            );
+
+            // Wait for progress reports to complete
+            progressCompleted.Wait();
+
+            // Assert
+            // Ensure that progress was reported at least once
+            Assert.NotEmpty(progressList);
+            // Ensure the final progress is reported
+            Assert.Equal(1.0, progressList.Last());
+        }
 
         [Fact]
         public void Should_Generate_Expected_Geohashes_For_Polygon_City_Of_Boston()
@@ -144,7 +194,7 @@ namespace Geohash.Tests
 
 
         [Fact]
-        public void ShouldHave_have_Geohashes_From_NestedPolygon()
+        public void Should_Handle_NestedPolygon()
         {
             // Given a large encompassing rectangle
             Polygon largeRectangle = new Polygon(new LinearRing(new Coordinate[] {
@@ -200,6 +250,29 @@ namespace Geohash.Tests
         }
 
         [Fact]
+        public void Should_Return_Expected_Hashes_From_Funky_Polygon()
+        {
+            Coordinate[] coordinates = new[]
+            {
+                new Coordinate(-105.0567626953125f, 40.6639728763869f),
+                new Coordinate(-105.38360595703125f, 40.49918094806632f),
+                new Coordinate(-104.4854736328125f, 40.0717663466261f),
+                new Coordinate(-104.47448730468749f, 40.29419163838167f),
+                new Coordinate(-104.765625f, 40.30466538259176f),
+                new Coordinate(-104.6392822265625f, 40.47202439692057f),
+                new Coordinate(-104.94415283203125f, 40.46575594018434f),
+                new Coordinate(-105.0567626953125f, 40.6639728763869f)  // Closing the polygon with the starting point
+            };
+
+            Polygon polygon = new Polygon(new LinearRing(coordinates));
+
+            var hashed = _polygonHasher.GetHashes(polygon, 6, PolygonHasher.GeohashInclusionCriteria.Intersects);
+
+            Assert.Equal(3127, hashed.Count);
+           
+        }
+
+        [Fact]
         public void Should_Return_Expected_Hashes_From_Large_Polygon()
         {
             Coordinate[] coordinates = new[]
@@ -229,6 +302,140 @@ namespace Geohash.Tests
 
             // Compare the two collections with Xunit
             Assert.Equal(sortedExpected, sortedHashed);
+        }
+
+        [Fact]
+        public void Should_ReturnOnlyExpectedGeohash_ForBoundingBox_Precision1()
+        {
+            // Arrange
+            var hasher = new PolygonHasher();
+
+            var coordinates = new[]
+            {
+                new Coordinate(0, 0),
+                new Coordinate(0, 90),
+                new Coordinate(180, 90),
+                new Coordinate(180, 0),
+                new Coordinate(0, 0) // Close the polygon
+            };
+            var linearRing = new LinearRing(coordinates);
+            var polygon = new Polygon(linearRing);
+
+            int precision = 1;
+
+            // Expected geohash at precision 1 that covers the defined polygon
+            var expected = new[] { "s", "t", "w", "y", "z", "u", "x", "v" };
+
+            // Act
+            var hashed = hasher.GetHashes(polygon, precision, PolygonHasher.GeohashInclusionCriteria.Contains);
+
+            // Assert
+            var sortedHashed = hashed.OrderBy(x => x).ToList();
+            var sortedExpected = expected.OrderBy(x => x).ToList();
+
+            // Compare the two collections with Xunit
+            Assert.Equal(sortedExpected, sortedHashed);
+        }
+
+        [Fact]
+        public void Should_GetHashes_With_Precision2()
+        {
+
+            var expected = new List<string> { "s2", "s0", "ef", "eb", "s1", "s6", "ec", "s8", "kx", "s4", "sd", "kp", "s9", "s3", "7z", "kr" };
+
+
+            // Define the polygon
+            var coordinates = new[]
+            {
+                new Coordinate(0, 0),
+                new Coordinate(0, 11.25),
+                new Coordinate(22.5, 11.25),
+                new Coordinate(22.5, 0),
+                new Coordinate(0, 0) // Close the polygon
+            };
+            var linearRing = new LinearRing(coordinates);
+            var polygon = new Polygon(linearRing);
+
+            int precision = 2;
+
+            // Act
+            var hashed = _polygonHasher.GetHashes(polygon, precision, PolygonHasher.GeohashInclusionCriteria.Intersects);
+
+            // Sort both collections
+            var sortedHashed = hashed.OrderBy(x => x).ToList();
+            var sortedExpected = expected.OrderBy(x => x).ToList();
+
+            // Compare the two collections with Xunit
+            Assert.Equal(sortedExpected, sortedHashed);
+        }
+
+        [Fact]
+        public void Should_Not_Generate_GeohashesOutside_GeographicalBounds()
+        {
+
+            var geohasher = new Geohasher();
+
+            // Arrange
+            int precision = 1;
+            // At precision 1, the world is divided into 8 longitude and 4 latitude geohashes
+            int expectedGeohashCount = 32;
+
+            // Define a polygon that slightly exceeds the valid longitude and latitude ranges
+            // For example, extend 0.1 degrees beyond the max bounds
+            double epsilon = 0.1;
+            var coordinates = new[]
+            {
+                new Coordinate(-180.0 - epsilon, -90.0 - epsilon),
+                new Coordinate(-180.0 - epsilon, 90.0 + epsilon),
+                new Coordinate(180.0 + epsilon, 90.0 + epsilon),
+                new Coordinate(180.0 + epsilon, -90.0 - epsilon),
+                new Coordinate(-180.0 - epsilon, -90.0 - epsilon)
+            };
+            var linearRing = new LinearRing(coordinates);
+            var polygon = new Polygon(linearRing);
+
+            // Act
+            var geohashes = _polygonHasher.GetHashes(polygon, precision);
+
+            // Assert
+            foreach (var geohash in geohashes)
+            {
+                // Decode geohash to get its bounding box
+                var bbox = geohasher.GetBoundingBox(geohash);
+
+                // Verify latitude bounds
+                Assert.InRange(bbox.MinLat, -90.0, 90.0);
+                Assert.InRange(bbox.MaxLat, -90.0, 90.0);
+
+                // Verify longitude bounds
+                Assert.InRange(bbox.MinLng, -180.0, 180.0);
+                Assert.InRange(bbox.MaxLng, -180.0, 180.0);
+            }
+
+            // Additionally, verify that the total geohash count does not exceed expected
+            // At precision 1, the world should have exactly 32 geohashes
+            Assert.Equal(expectedGeohashCount, geohashes.Count);
+        }
+
+        [Fact]
+        public void Should_Give_Correct_Hashes_Near_North_Pole()
+        {
+            // Create a polygon near the North Pole
+            var coordinates = new Coordinate[]
+            {
+                new Coordinate(-10.0, 89.8),
+                new Coordinate(10.0, 89.8),
+                new Coordinate(10.0, 89.9),
+                new Coordinate(-10.0, 89.9),
+                new Coordinate(-10.0, 89.8)
+            };
+            var polygon = new Polygon(new LinearRing(coordinates));
+
+            var polygonHasher = new PolygonHasher();
+            var geohashes = polygonHasher.GetHashes(polygon, 7);
+
+            // Assert that some geohashes are returned
+            Assert.Equal(geohashes.Count, 1048464);
         }
 
     }

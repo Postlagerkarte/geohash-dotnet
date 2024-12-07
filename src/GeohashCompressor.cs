@@ -4,99 +4,69 @@ using System.Linq;
 namespace Geohash
 {
     /// <summary>
-    /// Provides functionality to compress an array of geohashes by finding the smallest possible set of geohashes that still cover the same area.
+    /// Compresses an array of geohashes to the smallest possible set covering the same area.
     /// </summary>
     public class GeohashCompressor
     {
-        private Geohasher geohasher = new Geohasher();
-
+        private readonly Geohasher _geohasher = new Geohasher();
 
         /// <summary>
-        /// Compresses an array of geohashes by finding the smallest possible set of geohashes that still cover the same area.
+        /// Compresses geohashes to the smallest possible set covering the same area.
         /// </summary>
-        /// <param name="hashes">An array of geohashes to compress.</param>
-        /// <param name="minlevel">The minimum allowed length of a geohash (default value is 1).</param>
-        /// <param name="maxlevel">The maximum allowed length of a geohash (default value is 12).</param>
-        /// <returns>A list of compressed geohashes.</returns>
-        public List<string> Compress(string[] hashes, int minlevel = 1, int maxlevel = 12)
+        /// <param name="hashes">Input geohashes to compress.</param>
+        /// <param name="minLevel">Minimum allowed geohash length (default: 1).</param>
+        /// <param name="maxLevel">Maximum allowed geohash length (default: 12).</param>
+        /// <returns>Compressed list of geohashes.</returns>
+        public List<string> Compress(string[] hashes, int minLevel = 1, int maxLevel = 12)
         {
-            // Initialize data structures used in the algorithm
-            HashSet<string> geohashes = new HashSet<string>(hashes);
-            HashSet<string> deletegh = new HashSet<string>();
-            HashSet<string> final_geohashes = new HashSet<string>();
-            bool keepWorking = true;
-            int final_geohashes_size = 0;
+            var geohashSet = new HashSet<string>(hashes);
+            var compressedGeohashes = new HashSet<string>();
 
-            // Continue the compression algorithm until no further compression is possible
-            while (keepWorking)
+            while (true)
             {
-                // Clear temporary data structures for each iteration
-                deletegh.Clear();
-                final_geohashes.Clear();
-
-                // Iterate through each geohash in the input set
-                foreach (var geohash in geohashes)
+                var newCompressedGeohashes = GetCompressedGeohashes(geohashSet, minLevel, maxLevel);
+                if (compressedGeohashes.SetEquals(newCompressedGeohashes))
                 {
-                    var geohash_length = geohash.Length;
+                    break;
+                }
+                compressedGeohashes = newCompressedGeohashes;
+                geohashSet = new HashSet<string>(compressedGeohashes); // Update geohashSet to reflect compressed state
+            }
 
-                    // Check if the geohash length is within the allowed range
-                    if (geohash_length >= minlevel)
-                    {
-                        var part = geohash;
+            return compressedGeohashes.ToList();
+        }
 
-                        // Remove the last character from the geohash if it is longer than 1 character
-                        if (geohash.Length > 1)
-                        {
-                            part = geohash.Substring(0, geohash.Length - 1);
-                        }
+        private HashSet<string> GetCompressedGeohashes(HashSet<string> geohashSet, int minLevel, int maxLevel)
+        {
+            var compressedGeohashes = new HashSet<string>();
 
-                        // Ensure the geohash is not already marked for deletion
-                        if (!deletegh.Contains(part) && !deletegh.Contains(geohash))
-                        {
-                            // Generate all possible subhashes for the current geohash
-                            var combinations = new HashSet<string>(geohasher.GetSubhashes(part));
-
-                            // Check if all subhashes are part of the input geohash set
-                            if (combinations.IsSubsetOf(geohashes))
-                            {
-                                final_geohashes.Add(part);
-                                deletegh.Add(part);
-                            }
-                            else
-                            {
-                                // Mark the current geohash for deletion and add it to the final set
-                                deletegh.Add(geohash);
-                                if (geohash.Length >= maxlevel)
-                                {
-                                    final_geohashes.Add(geohash.Substring(0, maxlevel));
-                                }
-                                else
-                                {
-                                    final_geohashes.Add(geohash);
-                                }
-                            }
-                        }
-                    }
+            foreach (var geohash in geohashSet)
+            {
+                if (geohash.Length < minLevel)
+                {
+                    compressedGeohashes.Add(geohash); // Add short geohashes as is
+                    continue;
                 }
 
-                // Terminate the loop if the final set of geohashes has not changed in size
-                if (final_geohashes_size == final_geohashes.Count)
+                var parentGeohash = GetParentGeohash(geohash);
+                if (parentGeohash != null && AreAllSubhashesPresent(geohashSet, parentGeohash))
                 {
-                    keepWorking = false;
+                    compressedGeohashes.Add(parentGeohash);
                 }
                 else
                 {
-                    final_geohashes_size = final_geohashes.Count();
-                    geohashes = new HashSet<string>(final_geohashes);
+                    compressedGeohashes.Add(LimitGeohashLength(geohash, maxLevel));
                 }
             }
 
-            // Return the final compressed set of geohashes
-            return geohashes.ToList();
+            return compressedGeohashes;
         }
+
+        private string GetParentGeohash(string geohash) => geohash.Length > 1 ? geohash.Substring(0, geohash.Length - 1) : null;
+
+        private bool AreAllSubhashesPresent(HashSet<string> geohashSet, string parentGeohash)
+            => _geohasher.GetSubhashes(parentGeohash).All(geohashSet.Contains);
+
+        private string LimitGeohashLength(string geohash, int maxLength) => geohash.Length > maxLength ? geohash.Substring(0, maxLength) : geohash;
     }
-
 }
-
-
-

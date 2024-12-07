@@ -1,4 +1,7 @@
-﻿using System.Collections.Generic;
+﻿using System;
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.Linq;
 using Xunit;
 
 namespace Geohash.Tests
@@ -6,7 +9,7 @@ namespace Geohash.Tests
     public class GeohashCompressorTests
     {
         [Fact]
-        public void TestCompressWithNoCompressionPossible()
+        public void Should_Compress_NoCompressionPossible()
         {
             // Arrange
             var geohashCompressor = new GeohashCompressor();
@@ -21,7 +24,7 @@ namespace Geohash.Tests
         }
 
         [Fact]
-        public void TestCompressWithEmptyInput()
+        public void Should_Compress_EmptyInput_ReturnsEmptyList()
         {
             // Arrange
             var geohashCompressor = new GeohashCompressor();
@@ -35,29 +38,28 @@ namespace Geohash.Tests
             Assert.Equal(expected, result);
         }
 
-
         [Fact]
-        public void TestCompressionWithLargeAmountOfHashes()
+        public void Should_Compress_LargeAmountOfHashes_Correctly()
         {
             var compressor = new GeohashCompressor();
 
             var compressed = compressor.Compress(GetHashes().ToArray());
 
             Assert.Equal(152, compressed.Count);
-
         }
 
         [Fact]
-        public void TestCompressWith32Geohashes()
+        public void Should_Compress_32Geohashes_IntoSingleGeohash()
         {
             // Arrange
             var geohashCompressor = new GeohashCompressor();
-            var input = new[] {
-                "tdnu20", "tdnu21", "tdnu22", "tdnu23", "tdnu24", "tdnu25", "tdnu26", "tdnu27", "tdnu28", "tdnu29",
-                "tdnu2b", "tdnu2c", "tdnu2d", "tdnu2e", "tdnu2f", "tdnu2g", "tdnu2h", "tdnu2j", "tdnu2k", "tdnu2m",
-                "tdnu2n", "tdnu2p", "tdnu2q", "tdnu2r", "tdnu2s", "tdnu2t", "tdnu2u", "tdnu2v", "tdnu2w", "tdnu2x",
-                "tdnu2y", "tdnu2z"
-            };
+            var input = new[]
+            {
+        "tdnu20", "tdnu21", "tdnu22", "tdnu23", "tdnu24", "tdnu25", "tdnu26", "tdnu27", "tdnu28", "tdnu29",
+        "tdnu2b", "tdnu2c", "tdnu2d", "tdnu2e", "tdnu2f", "tdnu2g", "tdnu2h", "tdnu2j", "tdnu2k", "tdnu2m",
+        "tdnu2n", "tdnu2p", "tdnu2q", "tdnu2r", "tdnu2s", "tdnu2t", "tdnu2u", "tdnu2v", "tdnu2w", "tdnu2x",
+        "tdnu2y", "tdnu2z"
+    };
             var expected = new List<string> { "tdnu2" };
 
             // Act
@@ -67,10 +69,198 @@ namespace Geohash.Tests
             Assert.Equal(expected, result);
         }
 
+        [Fact]
+        public void Should_Compress_NullInput_ThrowsArgumentNullException()
+        {
+            // Arrange
+            var geohashCompressor = new GeohashCompressor();
+            string[] hashes = null;
+
+            // Act & Assert
+            _ = Assert.Throws<ArgumentNullException>(() => geohashCompressor.Compress(hashes));
+        }
+
+        [Fact]
+        public void Should_Compress_NestedGeohashes_IntoParentGeohash()
+        {
+            // Arrange
+            var geohasher = new Geohasher();
+            var compressor = new GeohashCompressor();
+            string parentGeohash = "a";
+            string[] hashes = geohasher.GetSubhashes(parentGeohash)
+                .SelectMany(subhash => geohasher.GetSubhashes(subhash))
+                .ToArray();
+
+            // Act
+            var result = compressor.Compress(hashes);
+
+            // Assert
+            _ = Assert.Single(result);
+            Assert.Contains(parentGeohash, result);
+        }
+
+        [Fact]
+        public void Should_Compress_RealGeohashes_Correctly()
+        {
+            // Arrange
+            var geohasher = new Geohasher();
+            var compressor = new GeohashCompressor();
+            string parentGeohash = "u4pruydqqv";
+            string[] subhashes = geohasher.GetSubhashes(parentGeohash);
+
+            // Act
+            var result = compressor.Compress(subhashes);
+
+            // Assert
+            _ = Assert.Single(result);
+            Assert.Contains(parentGeohash, result);
+        }
+
+        [Fact]
+        public void Should_Compress_ShortGeohashes_AreAddedAsIs()
+        {
+            // Arrange
+            _ = new Geohasher();
+            var compressor = new GeohashCompressor();
+            string[] hashes = new string[] { "a0", "b1" };
+            int minLevel = 3;
+
+            // Act
+            var result = compressor.Compress(hashes, minLevel: minLevel);
+
+            // Assert
+            Assert.Equal(2, result.Count);
+            Assert.Contains("a0", result);
+            Assert.Contains("b1", result);
+        }
+
+        [Fact]
+        public void Should_Compress_LongGeohashes_AreTruncated()
+        {
+            // Arrange
+            var geohasher = new Geohasher();
+            var compressor = new GeohashCompressor();
+            string[] hashes = new string[] { "abcdef", "abcdeh" };
+            int maxLevel = 4;
+
+            // Act
+            var result = compressor.Compress(hashes, maxLevel: maxLevel);
+
+            // Assert
+            Assert.All(result, geohash => Assert.True(geohash.Length <= maxLevel));
+            Assert.Contains("abcd", result);
+        }
+
+        [Fact]
+        public void Should_Compress_VaryingLengthGeohashes_Correctly()
+        {
+            // Arrange
+            var geohasher = new Geohasher();
+            var compressor = new GeohashCompressor();
+
+            // Get all subhashes of "a0"
+            string parentGeohash = "a0";
+            string[] a0Subhashes = geohasher.GetSubhashes(parentGeohash);
+
+            // Include "a1" as is
+            string[] hashes = a0Subhashes.Concat(new[] { "a1" }).ToArray();
+
+            // Act
+            var result = compressor.Compress(hashes);
+
+            // Assert
+            Assert.Equal(2, result.Count);
+            Assert.Contains("a0", result); // "a0" after compressing all its subhashes
+            Assert.Contains("a1", result); // "a1" remains as is
+        }
+
+        [Fact]
+        public void Should_Compress_LargeNumberOfGeohashes_PerformanceTest()
+        {
+            // Arrange
+            _ = new Geohasher();
+            var compressor = new GeohashCompressor();
+
+            int numGeohashes = 10000;
+            string[] hashes = new string[numGeohashes];
+            for (int i = 0; i < numGeohashes; i++)
+            {
+                hashes[i] = "a" + i.ToString();
+            }
+
+            // Act
+            var stopwatch = Stopwatch.StartNew();
+            _ = compressor.Compress(hashes);
+            stopwatch.Stop();
+
+            // Assert
+            Assert.True(stopwatch.ElapsedMilliseconds < 2000, "Compression took too long.");
+        }
+
+        [Fact]
+        public void Should_Compress_GeohashesExceedingMaxLength_AreTruncated()
+        {
+            // Arrange
+            var geohasher = new Geohasher();
+            var compressor = new GeohashCompressor();
+            string[] hashes = new string[] { "abcdef", "abcdeg", "abcdeh" };
+            int maxLevel = 5;
+
+            // Act
+            var result = compressor.Compress(hashes, maxLevel: maxLevel);
+
+            // Assert
+            Assert.All(result, geohash => Assert.True(geohash.Length <= maxLevel));
+        }
+
+        [Fact]
+        public void Should_Compress_GeohashesAtMinimumLength()
+        {
+            // Arrange
+            _ = new Geohasher();
+            var compressor = new GeohashCompressor();
+            string[] hashes = new string[] { "a", "b", "c" };
+            int minLevel = 1;
+
+            // Act
+            var result = compressor.Compress(hashes, minLevel);
+
+            // Assert
+            Assert.Equal(3, result.Count);
+            Assert.Contains("a", result);
+            Assert.Contains("b", result);
+            Assert.Contains("c", result);
+        }
+
+        [Fact]
+        public void Should_Compress_GeohashesThatCannotBeCompressed()
+        {
+            // Arrange
+            _ = new Dictionary<string, List<string>>
+            {
+                { "a", new List<string> { "a0", "a1" } },
+                { "b", new List<string> { "b0", "b1" } },
+            };
+            _ = new Geohasher();
+            var compressor = new GeohashCompressor();
+
+            string[] hashes = new string[] { "a0", "b0" };
+
+            // Act
+            var result = compressor.Compress(hashes);
+
+            // Assert
+            Assert.Equal(2, result.Count);
+            Assert.Contains("a0", result);
+            Assert.Contains("b0", result);
+        }
+
+
+
         private List<string> GetHashes()
         {
-            return new List<string>()
-                    {
+            return
+                    [
                         "u2uk",
                         "u2fm",
                         "u2c7",
@@ -254,7 +444,7 @@ namespace Geohash.Tests
                         "u2gt",
                         "u2et",
                         "u2ex"
-                    };
+                    ];
         }
     }
 }
