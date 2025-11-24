@@ -2,13 +2,15 @@ using NetTopologySuite.Geometries;
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 
 namespace Geohash
 {
     /// <summary>
-    /// Provides functionality to generate geohashes within a polygon based on the specified precision and inclusion criteria.
+    /// Generates geohashes covering a polygon. Handles antimeridian-crossing polygons
+    /// by splitting them into valid longitude ranges before processing.
     /// </summary>
     public class PolygonHasher
     {
@@ -16,145 +18,306 @@ namespace Geohash
         private const int MaxGeohashPrecision = 12;
         private Geohasher _geohasher = new Geohasher();
 
-        /// <summary>
-        /// Specifies the criteria used to determine if a geohash should be included in the result set.
-        /// </summary>
         public enum GeohashInclusionCriteria
         {
             /// <summary>
-            /// Include geohashes that are entirely contained within the input polygon.
+            /// Geohash cell must be entirely within the polygon.
             /// </summary>
             Contains,
 
             /// <summary>
-            /// Include geohashes that intersect the input polygon, even partially.
+            /// Geohash cell may partially overlap the polygon boundary.
             /// </summary>
             Intersects
         }
 
-        /// <summary>
-        /// Get the geohashes of the specified precision that meet the specified inclusion criteria with the input polygon.
-        /// </summary>
-        /// <param name="polygon">The input polygon.</param>
-        /// <param name="geohashPrecision">The desired geohash precision.</param>
-        /// <param name="geohashInclusionCriteria">The criteria for including geohashes in the result set.</param>
-        /// <param name="progress">Allows to report progress</param>
-        /// <returns>A HashSet containing the geohashes that meet the specified inclusion criteria with the input polygon.</returns>
-
-        public HashSet<string> GetHashes(Polygon polygon, int geohashPrecision, GeohashInclusionCriteria geohashInclusionCriteria = GeohashInclusionCriteria.Contains, IProgress<double> progress = null)
+        /// <param name="polygon">Must be valid; antimeridian-crossing polygons are automatically split.</param>
+        /// <param name="geohashPrecision">1-12; higher precision = smaller cells = exponentially more results.</param>
+        /// <param name="progress">Reports 0.0 to 1.0; updates throttled to 1% increments to avoid callback overhead.</param>
+        public HashSet<string> GetHashes(Polygon polygon, int geohashPrecision,
+            GeohashInclusionCriteria geohashInclusionCriteria = GeohashInclusionCriteria.Contains,
+            IProgress<double> progress = null)
         {
-            if (geohashPrecision < MinGeohashPrecision || geohashPrecision > MaxGeohashPrecision)
+            if (polygon == null) throw new ArgumentNullException(nameof(polygon));
+
+            var originalEnv = polygon.EnvelopeInternal;
+
+            // World-spanning polygons don't need antimeridian handling
+            List<Polygon> polys;
+            if (originalEnv.Width >= 360.0 && originalEnv.Height >= 180.0)
             {
-                throw new ArgumentOutOfRangeException(
-                    nameof(geohashPrecision),
-                    $"Geohash precision must be between {MinGeohashPrecision} and {MaxGeohashPrecision}."
-                );
+                polys = new List<Polygon> { polygon };
+            }
+            else
+            {
+                polys = SplitAntimeridian(polygon);
             }
 
-            var envelope = polygon.EnvelopeInternal;
-
-            // Calculate the number of bits used for latitude and longitude
-            int totalBits = 5 * geohashPrecision;
-            int numLonBits = (totalBits + 1) / 2; // Integer division
-            int numLatBits = totalBits / 2;       // Integer division
-
-            // Calculate the step sizes for latitude and longitude
-            double latStep = 180.0 / Math.Pow(2, numLatBits);
-            double lngStep = 360.0 / Math.Pow(2, numLonBits);
-
-            // Expand the envelope to cover edge geohashes
-            envelope.ExpandBy(lngStep / 2, latStep / 2);
-
-            // Clamp the envelope to valid latitude and longitude ranges
-            envelope = new Envelope(
-                Math.Max(envelope.MinX, -180.0),
-                Math.Min(envelope.MaxX, 180.0),
-                Math.Max(envelope.MinY, -90.0),
-                Math.Min(envelope.MaxY, 90.0)
-            );
-
-
-            HashSet<string> geohashes = new HashSet<string>();
+            var concurrentGeohashes = new ConcurrentBag<string>();
             bool checkContains = geohashInclusionCriteria == GeohashInclusionCriteria.Contains;
             bool checkIntersects = geohashInclusionCriteria == GeohashInclusionCriteria.Intersects;
 
-            // Accurate loop index calculation using Math.Floor and Math.Ceiling
-            int startLatIdx = (int)Math.Floor(envelope.MinY / latStep);
-            int endLatIdx = (int)Math.Ceiling(envelope.MaxY / latStep);
-            int startLngIdx = (int)Math.Floor(envelope.MinX / lngStep);
-            int endLngIdx = (int)Math.Ceiling(envelope.MaxX / lngStep);
+            long totalSteps = 0;
+            var polyInfos = new List<(Polygon poly, Envelope env, double latStep, double lngStep,
+                int startLatIdx, int endLatIdx, int startLngIdx, int endLngIdx)>();
 
-            // Initialize progress reporting variables
-            int totalSteps = endLatIdx - startLatIdx;
-            totalSteps = Math.Max(totalSteps, 1);
-
-            int reportInterval = Math.Max(1, totalSteps / 100); // Report every 1%
-            long currentStep = 0;
-
-            // Use ConcurrentBag for thread-safe collection without explicit locking
-            var concurrentGeohashes = new ConcurrentBag<string>();
-
-            // Use a thread-safe counter for progress
-            object progressLock = new object();
-
-            Parallel.For(startLatIdx, endLatIdx, latIdx =>
+            foreach (var poly in polys)
             {
-                double lat = latIdx * latStep;
+                var envelope = poly.EnvelopeInternal;
 
-                for (int lngIdx = startLngIdx; lngIdx <= endLngIdx; lngIdx++)
-                {
-                    double lng = lngIdx * lngStep;
+                // Geohash precision determines cell dimensions:
+                // - Total bits = 5 * precision (each character encodes 5 bits)
+                // - Longitude gets the extra bit on odd totals (interleaved encoding)
+                int totalBits = 5 * geohashPrecision;
+                int numLonBits = (totalBits + 1) / 2;
+                int numLatBits = totalBits / 2;
+                double latStep = 180.0 / Math.Pow(2, numLatBits);
+                double lngStep = 360.0 / Math.Pow(2, numLonBits);
 
-                    // Generate a geohash for the latitude-longitude pair.
-                    string curGeohash = _geohasher.Encode(lat, lng, geohashPrecision);
+                // Expand envelope by half a cell to catch edge-touching geohashes
+                envelope.ExpandBy(lngStep / 2, latStep / 2);
 
-                    // Get bounding box for geohash and convert to polygon.
-                    var bbox = _geohasher.GetBoundingBox(curGeohash);
-                    var coords = new Coordinate[]
-                    {
-                        new Coordinate(bbox.MinLng, bbox.MinLat),
-                        new Coordinate(bbox.MinLng, bbox.MaxLat),
-                        new Coordinate(bbox.MaxLng, bbox.MaxLat),
-                        new Coordinate(bbox.MaxLng, bbox.MinLat),
-                        new Coordinate(bbox.MinLng, bbox.MinLat)
-                    };
+                envelope = new Envelope(
+                    Math.Max(envelope.MinX, -180.0),
+                    Math.Min(envelope.MaxX, 180.0),
+                    Math.Max(envelope.MinY, -90.0),
+                    Math.Min(envelope.MaxY, 90.0)
+                );
 
-                    var geohashPoly = new Polygon(new LinearRing(coords));
+                // Convert envelope bounds to grid indices for iteration
+                int startLatIdx = (int)Math.Floor(envelope.MinY / latStep);
+                int endLatIdx = (int)Math.Ceiling(envelope.MaxY / latStep);
+                int startLngIdx = (int)Math.Floor(envelope.MinX / lngStep);
+                int endLngIdx = (int)Math.Ceiling(envelope.MaxX / lngStep);
 
-                    if ((checkContains && polygon.Contains(geohashPoly)) ||
-                        (checkIntersects && polygon.Intersects(geohashPoly)))
-                    {
-                        concurrentGeohashes.Add(curGeohash);
-                    }
-                }
-
-
-                // Update progress
-                if (progress != null)
-                {
-                    long step = Interlocked.Increment(ref currentStep);
-
-                    // Report progress at defined intervals or on the last step
-                    if (step % reportInterval == 0 || step == totalSteps)
-                    {
-                        double progressValue = (double)step / totalSteps;
-                        progress.Report(Math.Min(progressValue, 1.0));
-                    }
-                }
-
-            });
-
-            // Transfer geohashes from ConcurrentBag to HashSet
-            foreach (var gh in concurrentGeohashes)
-            {
-                geohashes.Add(gh);
+                totalSteps += Math.Max(endLatIdx - startLatIdx, 0);
+                polyInfos.Add((poly, envelope, latStep, lngStep, startLatIdx, endLatIdx, startLngIdx, endLngIdx));
             }
 
-            // Final progress update to ensure we reach 100% when done
-            progress?.Report(1.0);
+            if (totalSteps == 0)
+            {
+                progress?.Report(1.0);
+                return new HashSet<string>();
+            }
 
-            return geohashes;
+            long completedSteps = 0;
+            int lastReportedPercent = -1;
+
+            foreach (var info in polyInfos)
+            {
+                // Parallelize by latitude rows; each row processes all longitude cells
+                Parallel.For(info.startLatIdx, info.endLatIdx, latIdx =>
+                {
+                    double lat = latIdx * info.latStep;
+
+                    for (int lngIdx = info.startLngIdx; lngIdx <= info.endLngIdx; lngIdx++)
+                    {
+                        double lng = lngIdx * info.lngStep;
+                        string curGeohash = _geohasher.Encode(lat, lng, geohashPrecision);
+
+                        // Build geohash cell as polygon for spatial comparison
+                        var bbox = _geohasher.GetBoundingBox(curGeohash);
+                        var coords = new Coordinate[]
+                        {
+                            new Coordinate(bbox.MinLng, bbox.MinLat),
+                            new Coordinate(bbox.MinLng, bbox.MaxLat),
+                            new Coordinate(bbox.MaxLng, bbox.MaxLat),
+                            new Coordinate(bbox.MaxLng, bbox.MinLat),
+                            new Coordinate(bbox.MinLng, bbox.MinLat)
+                        };
+                        var geohashPoly = new Polygon(new LinearRing(coords));
+
+                        if ((checkContains && info.poly.Contains(geohashPoly)) ||
+                            (checkIntersects && info.poly.Intersects(geohashPoly)))
+                        {
+                            concurrentGeohashes.Add(curGeohash);
+                        }
+                    }
+
+                    if (progress != null)
+                    {
+                        long completed = Interlocked.Increment(ref completedSteps);
+                        int percent = (int)(completed * 100 / totalSteps);
+                        int lastPercent = Volatile.Read(ref lastReportedPercent);
+
+                        // CAS ensures only one thread reports each percentage milestone
+                        if (percent > lastPercent)
+                        {
+                            if (Interlocked.CompareExchange(ref lastReportedPercent, percent, lastPercent) == lastPercent)
+                            {
+                                progress.Report(percent / 100.0);
+                            }
+                        }
+                    }
+                });
+            }
+
+            progress?.Report(1.0);
+            return new HashSet<string>(concurrentGeohashes);
         }
 
+        /// <summary>
+        /// Detects antimeridian crossing by checking for large longitude jumps between consecutive points.
+        /// </summary>
+        private bool CheckCrossing(double lon1, double lon2, double dlonThreshold = 180.0)
+        {
+            return Math.Abs(lon2 - lon1) > dlonThreshold;
+        }
+
+        /// <summary>
+        /// Splits polygons crossing the antimeridian (±180°) into separate valid polygons.
+        /// 
+        /// Algorithm:
+        /// 1. Detect crossings by finding >180° longitude jumps between consecutive vertices
+        /// 2. "Unwrap" coordinates by shifting crossed vertices ±360° to create a continuous ring
+        /// 3. If unwrapped polygon extends beyond ±180°, split along the exceeded meridian
+        /// 4. Translate split pieces back into valid [-180, 180] longitude range
+        /// </summary>
+        private List<Polygon> SplitAntimeridian(Polygon original)
+        {
+            // Deep copy all rings (exterior shell + holes) for coordinate manipulation
+            var coordsShift = new List<Coordinate[]>();
+            coordsShift.Add(original.ExteriorRing.Coordinates.Select(c => new Coordinate(c)).ToArray());
+            foreach (var hole in original.InteriorRings)
+            {
+                coordsShift.Add(hole.Coordinates.Select(c => new Coordinate(c)).ToArray());
+            }
+
+            double? shellMinX = null, shellMaxX = null;
+            var splitMeridians = new HashSet<double>();
+
+            for (int ringIndex = 0; ringIndex < coordsShift.Count; ringIndex++)
+            {
+                var ring = coordsShift[ringIndex];
+                if (ring.Length < 1) continue;
+
+                double ringMinX = ring[0].X;
+                double ringMaxX = ring[0].X;
+                int crossings = 0;
+
+                // Unwrap: when we detect a crossing, shift the coordinate to maintain continuity
+                for (int coordIndex = 1; coordIndex < ring.Length; coordIndex++)
+                {
+                    double lon = ring[coordIndex].X;
+                    double lonPrev = ring[coordIndex - 1].X;
+
+                    if (CheckCrossing(lon, lonPrev))
+                    {
+                        double direction = Math.Sign(lon - lonPrev);
+                        ring[coordIndex].X = lon - direction * 360.0;
+                        crossings++;
+                    }
+
+                    double xShift = ring[coordIndex].X;
+                    if (xShift < ringMinX) ringMinX = xShift;
+                    if (xShift > ringMaxX) ringMaxX = xShift;
+                }
+
+                if (ringIndex == 0)
+                {
+                    // Shell defines the reference frame for holes
+                    shellMinX = ringMinX;
+                    shellMaxX = ringMaxX;
+                }
+                else
+                {
+                    // Holes may end up on the "wrong side" after unwrapping; re-align with shell
+                    if (ringMinX < shellMinX)
+                    {
+                        for (int j = 0; j < ring.Length; j++)
+                            ring[j].X += 360;
+                        ringMinX += 360;
+                        ringMaxX += 360;
+                    }
+                    else if (ringMaxX > shellMaxX)
+                    {
+                        for (int j = 0; j < ring.Length; j++)
+                            ring[j].X -= 360;
+                        ringMinX -= 360;
+                        ringMaxX -= 360;
+                    }
+                }
+
+                if (crossings > 0)
+                {
+                    // Track which meridian(s) the unwrapped polygon exceeds
+                    if (ringMinX < -180) splitMeridians.Add(-180);
+                    if (ringMaxX > 180) splitMeridians.Add(180);
+                }
+            }
+
+            // Polygons crossing both meridians would require multi-way splitting
+            if (splitMeridians.Count > 1)
+            {
+                throw new NotImplementedException("Splitting across multiple meridians not supported.");
+            }
+
+            var geometryFactory = new GeometryFactory();
+            var shellRing = new LinearRing(coordsShift[0]);
+            var holeRings = coordsShift.Skip(1).Select(r => new LinearRing(r)).ToArray();
+            var shiftedPoly = geometryFactory.CreatePolygon(shellRing, holeRings);
+
+            var resultPolys = new List<Polygon>();
+
+            if (splitMeridians.Count == 1)
+            {
+                double splitLon = splitMeridians.First();
+
+                // Use oversized half-planes to ensure complete intersection coverage
+                // (±1000° handles any amount of coordinate unwrapping)
+                var leftHalf = geometryFactory.CreatePolygon(new Coordinate[]
+                {
+                    new Coordinate(-1000, -90),
+                    new Coordinate(-1000, 90),
+                    new Coordinate(splitLon, 90),
+                    new Coordinate(splitLon, -90),
+                    new Coordinate(-1000, -90)
+                });
+
+                var rightHalf = geometryFactory.CreatePolygon(new Coordinate[]
+                {
+                    new Coordinate(splitLon, -90),
+                    new Coordinate(splitLon, 90),
+                    new Coordinate(1000, 90),
+                    new Coordinate(1000, -90),
+                    new Coordinate(splitLon, -90)
+                });
+
+                var leftPart = shiftedPoly.Intersection(leftHalf) as Polygon;
+                var rightPart = shiftedPoly.Intersection(rightHalf) as Polygon;
+
+                if (leftPart != null) resultPolys.Add(TranslatePolygon(leftPart));
+                if (rightPart != null) resultPolys.Add(TranslatePolygon(rightPart));
+            }
+            else
+            {
+                resultPolys.Add(TranslatePolygon(shiftedPoly));
+            }
+
+            return resultPolys;
+        }
+
+        /// <summary>
+        /// Shifts polygon coordinates by ±360° to bring them into valid [-180, 180] range.
+        /// </summary>
+        private Polygon TranslatePolygon(Polygon poly)
+        {
+            var env = poly.EnvelopeInternal;
+            double shift = 0;
+
+            if (env.MinX < -180) shift = 360;
+            else if (env.MaxX > 180) shift = -360;
+
+            if (shift == 0) return poly;
+
+            var translatedShell = poly.ExteriorRing.Coordinates
+                .Select(c => new Coordinate(c.X + shift, c.Y)).ToArray();
+            var translatedHoles = poly.InteriorRings
+                .Select(h => new LinearRing(h.Coordinates
+                    .Select(c => new Coordinate(c.X + shift, c.Y)).ToArray()))
+                .ToArray();
+
+            return new Polygon(new LinearRing(translatedShell), translatedHoles);
+        }
     }
 }

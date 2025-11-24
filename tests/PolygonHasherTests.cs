@@ -1,6 +1,7 @@
 ﻿using NetTopologySuite.Geometries;
 using NetTopologySuite.IO;
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Diagnostics;
@@ -117,28 +118,28 @@ namespace Geohash.Tests
 
 
         [Fact]
-        public void Should_Not_Crash_When_ProgressReporting()
+        public void Should_Correctly_Report_Progress()
         {
             // Arrange
-            // Define a polygon with a very small area to ensure small totalSteps
             var coordinates = new Coordinate[]
             {
-                new Coordinate(0.0, 0.0),
-                new Coordinate(0.0, 0.0001),
-                new Coordinate(0.0001, 0.0001),
-                new Coordinate(0.0001, 0.0),
-                new Coordinate(0.0, 0.0)
+        new Coordinate(0.0, 0.0),
+        new Coordinate(0.0, 0.0001),
+        new Coordinate(0.0001, 0.0001),
+        new Coordinate(0.0001, 0.0),
+        new Coordinate(0.0, 0.0)
             };
             var polygon = new Polygon(new LinearRing(coordinates));
 
-            int precision = 8; // High precision leading to small steps
-            var progressList = new List<double>();
+            int precision = 8;
+            var progressList = new ConcurrentBag<double>(); // Thread-safe collection
             var progressCompleted = new ManualResetEventSlim(false);
-            var progressReporter = new Progress<double>(progress =>
+
+            // Use a custom IProgress<T> implementation for synchronous tracking
+            var progressReporter = new SynchronousProgress<double>(progress =>
             {
                 progressList.Add(progress);
 
-                // Signal completion when progress reaches 1.0
                 if (progress >= 1.0)
                 {
                     progressCompleted.Set();
@@ -153,14 +154,29 @@ namespace Geohash.Tests
                 progressReporter
             );
 
-            // Wait for progress reports to complete
-            progressCompleted.Wait();
+            // Wait for progress reports to complete with timeout
+            bool completed = progressCompleted.Wait(TimeSpan.FromSeconds(5));
 
             // Assert
-            // Ensure that progress was reported at least once
+            Assert.True(completed, "Progress reporting did not complete in time");
             Assert.NotEmpty(progressList);
-            // Ensure the final progress is reported
-            Assert.Equal(1.0, progressList.Last());
+            Assert.Contains(1.0, progressList); // Use Contains instead of Last() due to ConcurrentBag
+        }
+
+        // Helper class for synchronous progress reporting
+        private class SynchronousProgress<T> : IProgress<T>
+        {
+            private readonly Action<T> _handler;
+
+            public SynchronousProgress(Action<T> handler)
+            {
+                _handler = handler ?? throw new ArgumentNullException(nameof(handler));
+            }
+
+            public void Report(T value)
+            {
+                _handler(value);
+            }
         }
 
         [Fact]
