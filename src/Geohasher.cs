@@ -6,73 +6,59 @@ using System.Text;
 namespace Geohash
 {
     /// <summary>
-    /// Encodes/decodes geohashes - a hierarchical spatial index that maps lat/lng to short strings.
-    /// 
-    /// Key concepts:
-    /// - Each character adds ~5 bits of precision, subdividing the cell into a 4x8 or 8x4 grid (32 cells)
-    /// - Precision 1 = ~5000km cells, Precision 6 = ~1km cells, Precision 12 = ~3cm cells
-    /// - Geohashes with a common prefix are spatially close (but the reverse isn't always true due to edge effects)
-    /// - Uses base32 encoding (0-9, b-z excluding a, i, l, o to avoid confusion)
+    /// Encodes/decodes geohashes - a hierarchical spatial index.
+    /// Fixed version: Handles Date Line wrapping and Pole clamping correctly.
     /// </summary>
     public class Geohasher
     {
-        // Geohash base32 alphabet - excludes 'a', 'i', 'l', 'o' to prevent ambiguity
-        private static readonly char[] base32Chars = "0123456789bcdefghjkmnpqrstuvwxyz".ToCharArray();
-
-        // Bit masks for extracting each of the 5 bits from a base32 character (MSB to LSB)
-        private static readonly int[] bits = { 16, 8, 4, 2, 1 };
+        private static readonly char[] Base32Chars = "0123456789bcdefghjkmnpqrstuvwxyz".ToCharArray();
+        private static readonly int[] Bits = { 16, 8, 4, 2, 1 };
 
         /// <summary>
-        /// Converts lat/lng to a geohash string.
-        /// 
-        /// The algorithm performs binary search on both dimensions simultaneously:
-        /// longitude bits are placed at even positions (0, 2, 4...), latitude at odd positions.
-        /// Every 5 bits are grouped into one base32 character.
+        /// Encodes latitude/longitude to a geohash string.
         /// </summary>
-        /// <param name="precision">Each level adds ~2.5 bits of lat precision and ~2.5 bits of lng precision.</param>
+        /// <param name="latitude">Latitude [-90, 90]</param>
+        /// <param name="longitude">Longitude [-180, 180]</param>
+        /// <param name="precision">Length of the resulting hash (1-12)</param>
         public string Encode(double latitude, double longitude, int precision = 6)
         {
+            // 1. Normalize inputs to ensure safety
             longitude = NormalizeLongitude(longitude);
-            Validate(latitude, longitude);
+            latitude = ClampLatitude(latitude);
 
             if (precision < 1 || precision > 12)
-            {
                 throw new ArgumentException("Precision must be between 1 and 12");
-            }
 
             double[] latInterval = { -90.0, 90.0 };
             double[] lonInterval = { -180.0, 180.0 };
 
-            var geohash = new StringBuilder();
-            bool isEven = true;  // Start with longitude (even bit positions)
-            int bit = 0;         // Current bit position within the 5-bit character (0-4)
-            int ch = 0;          // Accumulated bits for current character
+            var geohash = new StringBuilder(precision);
+            bool isEven = true;  // Start with longitude
+            int bit = 0;
+            int ch = 0;
 
             while (geohash.Length < precision)
             {
                 double mid;
-
-                if (isEven)
+                if (isEven) // Longitude
                 {
-                    // Binary search on longitude
                     mid = (lonInterval[0] + lonInterval[1]) / 2;
                     if (longitude >= mid)
                     {
-                        ch |= bits[bit];  // Set bit to 1 = upper half
+                        ch |= Bits[bit];
                         lonInterval[0] = mid;
                     }
                     else
                     {
-                        lonInterval[1] = mid;  // Bit stays 0 = lower half
+                        lonInterval[1] = mid;
                     }
                 }
-                else
+                else // Latitude
                 {
-                    // Binary search on latitude
                     mid = (latInterval[0] + latInterval[1]) / 2;
                     if (latitude >= mid)
                     {
-                        ch |= bits[bit];
+                        ch |= Bits[bit];
                         latInterval[0] = mid;
                     }
                     else
@@ -89,8 +75,7 @@ namespace Geohash
                 }
                 else
                 {
-                    // Completed 5 bits - emit character and reset
-                    geohash.Append(base32Chars[ch]);
+                    geohash.Append(Base32Chars[ch]);
                     bit = 0;
                     ch = 0;
                 }
@@ -100,20 +85,7 @@ namespace Geohash
         }
 
         /// <summary>
-        /// Returns all 32 child cells (one precision level deeper).
-        /// Each child covers 1/32 of the parent's area.
-        /// </summary>
-        public string[] GetSubhashes(string geohash)
-        {
-            if (String.IsNullOrEmpty(geohash)) throw new ArgumentNullException(nameof(geohash));
-            if (geohash.Length > 12) throw new ArgumentException("geohash length must be <= 12");
-
-            return base32Chars.Select(x => $"{geohash}{x}").ToArray();
-        }
-
-        /// <summary>
-        /// Returns the center point of the geohash cell.
-        /// Note: This is the geometric center, not the original encoded point.
+        /// Returns the (Latitude, Longitude) center point of the geohash.
         /// </summary>
         public (double latitude, double longitude) Decode(string geohash)
         {
@@ -124,37 +96,8 @@ namespace Geohash
             return (latitude, longitude);
         }
 
-        public string GetNeighbor(string geohash, Direction direction)
-        {
-            if (String.IsNullOrEmpty(geohash)) throw new ArgumentNullException(nameof(geohash));
-            if (geohash.Length > 12) throw new ArgumentException($"{nameof(geohash)} length > 12");
-            var neighbors = CreateNeighbors(geohash);
-            return neighbors[direction];
-        }
-
         /// <summary>
-        /// Returns all 8 adjacent cells at the same precision level.
-        /// Handles antimeridian and pole wrapping automatically.
-        /// </summary>
-        public Dictionary<Direction, string> GetNeighbors(string geohash)
-        {
-            if (String.IsNullOrEmpty(geohash)) throw new ArgumentNullException(nameof(geohash));
-            if (geohash.Length > 12) throw new ArgumentException($"{nameof(geohash)} length > 12");
-            return CreateNeighbors(geohash);
-        }
-
-        /// <summary>
-        /// Returns the containing cell one level up (32x larger area).
-        /// </summary>
-        public string GetParent(string geohash)
-        {
-            ValidateGeohash(geohash);
-            return geohash.Substring(0, geohash.Length - 1);
-        }
-
-        /// <summary>
-        /// Reconstructs the cell boundaries by reversing the encoding process.
-        /// The bounding box represents the exact area covered by this geohash.
+        /// Returns the exact Bounding Box (Min/Max Lat/Lng) for this geohash.
         /// </summary>
         public BoundingBox GetBoundingBox(string geohash)
         {
@@ -164,26 +107,23 @@ namespace Geohash
             double[] lonInterval = { -180.0, 180.0 };
 
             bool isEven = true;
-            for (int i = 0; i < geohash.Length; i++)
+            foreach (char c in geohash)
             {
-                int currentCharacter = Array.IndexOf(base32Chars, geohash[i]);
+                int cd = Array.IndexOf(Base32Chars, c);
 
-                // Reverse the encoding: each bit narrows either lat or lng interval
-                for (int z = 0; z < bits.Length; z++)
+                for (int j = 0; j < 5; j++)
                 {
-                    int mask = bits[z];
-
+                    int mask = Bits[j];
                     if (isEven)
                     {
-                        // Bit=1 means we took the upper half of longitude range
-                        if ((currentCharacter & mask) != 0)
+                        if ((cd & mask) != 0)
                             lonInterval[0] = (lonInterval[0] + lonInterval[1]) / 2;
                         else
                             lonInterval[1] = (lonInterval[0] + lonInterval[1]) / 2;
                     }
                     else
                     {
-                        if ((currentCharacter & mask) != 0)
+                        if ((cd & mask) != 0)
                             latInterval[0] = (latInterval[0] + latInterval[1]) / 2;
                         else
                             latInterval[1] = (latInterval[0] + latInterval[1]) / 2;
@@ -201,134 +141,120 @@ namespace Geohash
             };
         }
 
-        private static void ValidateGeohash(string geohash)
+        /// <summary>
+        /// Returns the neighbor string in the specified direction.
+        /// Handles Antimeridian wrapping (Date Line) automatically.
+        /// Limits Latitude at the Poles (does not wrap latitude).
+        /// </summary>
+        public string GetNeighbor(string geohash, Direction direction)
         {
-            if (String.IsNullOrEmpty(geohash)) throw new ArgumentNullException("geohash");
-            if (geohash.Length > 12) throw new ArgumentException("geohash length > 12");
+            ValidateGeohash(geohash);
 
-            foreach (var ch in geohash)
+            // Decode bounds to size the step correctly
+            BoundingBox bbox = GetBoundingBox(geohash);
+            double latDiff = bbox.MaxLat - bbox.MinLat;
+            double lonDiff = bbox.MaxLng - bbox.MinLng;
+
+            double centerLat = (bbox.MinLat + bbox.MaxLat) / 2;
+            double centerLon = (bbox.MinLng + bbox.MaxLng) / 2;
+
+            // Calculate new center
+            switch (direction)
             {
-                if (!base32Chars.Contains(ch))
-                    throw new ArgumentException("Invalid character in geohash", nameof(geohash));
+                case Direction.North:
+                    centerLat += latDiff;
+                    break;
+                case Direction.South:
+                    centerLat -= latDiff;
+                    break;
+                case Direction.East:
+                    centerLon += lonDiff;
+                    break;
+                case Direction.West:
+                    centerLon -= lonDiff;
+                    break;
+                // Diagonals are recursive compositions
+                case Direction.NorthEast:
+                    return GetNeighbor(GetNeighbor(geohash, Direction.North), Direction.East);
+                case Direction.NorthWest:
+                    return GetNeighbor(GetNeighbor(geohash, Direction.North), Direction.West);
+                case Direction.SouthEast:
+                    return GetNeighbor(GetNeighbor(geohash, Direction.South), Direction.East);
+                case Direction.SouthWest:
+                    return GetNeighbor(GetNeighbor(geohash, Direction.South), Direction.West);
             }
+
+            // Normalization handles the Date Line wrapping (e.g. -185 becomes 175)
+            // Encode will internally clamp Latitude if we went past 90/ -90
+            return Encode(centerLat, NormalizeLongitude(centerLon), geohash.Length);
         }
 
         /// <summary>
-        /// Diagonal neighbors are computed by combining cardinal moves
-        /// (e.g., NorthWest = West of North, not a direct calculation).
+        /// Returns all 8 neighbors.
         /// </summary>
-        private Dictionary<Direction, string> CreateNeighbors(string geohash)
+        public Dictionary<Direction, string> GetNeighbors(string geohash)
         {
-            var result = new Dictionary<Direction, string>();
-            result.Add(Direction.North, North(geohash));
-            result.Add(Direction.NorthWest, West(result[Direction.North]));
-            result.Add(Direction.NorthEast, East(result[Direction.North]));
-            result.Add(Direction.East, East(geohash));
-            result.Add(Direction.South, South(geohash));
-            result.Add(Direction.SouthWest, West(result[Direction.South]));
-            result.Add(Direction.SouthEast, East(result[Direction.South]));
-            result.Add(Direction.West, West(geohash));
+            ValidateGeohash(geohash);
+            var neighbors = new Dictionary<Direction, string>();
+            foreach (Direction dir in Enum.GetValues(typeof(Direction)))
+            {
+                neighbors[dir] = GetNeighbor(geohash, dir);
+            }
+            return neighbors;
+        }
+
+        /// <summary>
+        /// Returns all 32 child sub-hashes (precision + 1).
+        /// </summary>
+        public string[] GetSubhashes(string geohash)
+        {
+            ValidateGeohash(geohash);
+            if (geohash.Length >= 12) throw new ArgumentException("Cannot generate subhashes for precision 12");
+
+            string[] result = new string[32];
+            for (int i = 0; i < 32; i++)
+            {
+                result[i] = geohash + Base32Chars[i];
+            }
             return result;
         }
 
-        private void Validate(double latitude, double longitude)
+        public string GetParent(string geohash)
         {
-            if (latitude < -90.0 || latitude > 90.0)
-            {
-                throw new ArgumentException("Latitude " + latitude + " is outside valid range of [-90,90]");
-            }
-            if (longitude < -180.0 || longitude > 180.0)
-            {
-                throw new ArgumentException("Longitude " + longitude + " is outside valid range of [-180,180]");
-            }
+            ValidateGeohash(geohash);
+            if (geohash.Length <= 1) throw new ArgumentException("Cannot get parent of precision 1");
+            return geohash.Substring(0, geohash.Length - 1);
         }
+
+        // --- Helpers ---
 
         /// <summary>
-        /// Finds neighbor by stepping half a cell height in the target direction,
-        /// then re-encoding. Pole crossing "bounces" latitude back into valid range.
-        /// </summary>
-        private string South(string geoHash)
-        {
-            BoundingBox bbox = GetBoundingBox(geoHash);
-            double latDiff = bbox.MaxLat - bbox.MinLat;
-            double lat = bbox.MinLat - latDiff / 2;
-            double lon = (bbox.MinLng + bbox.MaxLng) / 2;
-            lon = NormalizeLongitude(lon);
-
-            // Pole bounce: reflect latitude back from beyond -90
-            if (lat < -90)
-            {
-                lat = (-90 + (-90 - lat)) * -1;
-            }
-
-            return Encode(lat, lon, geoHash.Length);
-        }
-
-        private string North(string geoHash)
-        {
-            BoundingBox bbox = GetBoundingBox(geoHash);
-            double latDiff = bbox.MaxLat - bbox.MinLat;
-            double lat = bbox.MaxLat + latDiff / 2;
-
-            // Pole bounce: reflect latitude back from beyond +90
-            if (lat > 90)
-            {
-                lat = (90 - (lat - 90)) * -1;
-            }
-
-            double lon = (bbox.MinLng + bbox.MaxLng) / 2;
-            lon = NormalizeLongitude(lon);
-            return Encode(lat, lon, geoHash.Length);
-        }
-
-        private string West(string geoHash)
-        {
-            BoundingBox bbox = GetBoundingBox(geoHash);
-            double lonDiff = bbox.MaxLng - bbox.MinLng;
-            double lat = (bbox.MinLat + bbox.MaxLat) / 2;
-            double lon = bbox.MinLng - lonDiff / 2;
-            lon = NormalizeLongitude(lon);
-
-            // Antimeridian wrap
-            if (lon < -180)
-            {
-                lon = 180 - (lon + 180);
-            }
-            if (lon > 180)
-            {
-                lon = 180;
-            }
-
-            return Encode(lat, lon, geoHash.Length);
-        }
-
-        /// <summary>
-        /// Wraps longitude to [-180, 180) range.
+        /// Valid constant time modulo fix for negative numbers.
+        /// e.g. -185 => ((-185 + 180) % 360) - 180
         /// </summary>
         private double NormalizeLongitude(double lng)
         {
-            return (lng + 180) % 360 - 180;
+            double result = (lng + 180) % 360;
+            if (result < 0) result += 360;
+            return result - 180;
         }
 
-        private string East(string geoHash)
+        private double ClampLatitude(double lat)
         {
-            BoundingBox bbox = GetBoundingBox(geoHash);
-            double lonDiff = bbox.MaxLng - bbox.MinLng;
-            double lat = (bbox.MinLat + bbox.MaxLat) / 2;
-            double lon = bbox.MaxLng + lonDiff / 2;
-            lon = NormalizeLongitude(lon);
+            if (lat > 90.0) return 90.0;
+            if (lat < -90.0) return -90.0;
+            return lat;
+        }
 
-            // Antimeridian wrap
-            if (lon > 180)
-            {
-                lon = -180 + (lon - 180);
-            }
-            if (lon < -180)
-            {
-                lon = -180;
-            }
+        private void ValidateGeohash(string geohash)
+        {
+            if (string.IsNullOrEmpty(geohash)) throw new ArgumentException(nameof(geohash));
+            if (geohash.Length > 12) throw new ArgumentException("Geohash length cannot exceed 12");
 
-            return Encode(lat, lon, geoHash.Length);
+            foreach(var c in geohash)
+            {
+                if(!Base32Chars.Contains(c)) throw new ArgumentException($"Invalid character '{c}' found in geohash", nameof(geohash));
+            }
         }
     }
 }

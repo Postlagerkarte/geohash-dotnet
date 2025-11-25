@@ -1,72 +1,102 @@
-﻿using System.Collections.Generic;
+﻿using System;
+using System.Collections.Generic;
 using System.Linq;
 
 namespace Geohash
 {
     /// <summary>
-    /// Compresses an array of geohashes to the smallest possible set covering the same area.
+    /// Compresses sets of geohashes into the minimal set of nodes covering the same surface area.
     /// </summary>
     public class GeohashCompressor
     {
-        private readonly Geohasher _geohasher = new Geohasher();
-
         /// <summary>
-        /// Compresses geohashes to the smallest possible set covering the same area.
+        /// Compresses the input geohashes.
+        /// Logic:
+        /// 1. Normalize (truncate to maxLevel).
+        /// 2. Prune redundancies (if "a" and "ab" exist, "ab" is removed).
+        /// 3. Merge siblings (if all 32 children of "a" exist, replace with "a").
         /// </summary>
-        /// <param name="hashes">Input geohashes to compress.</param>
-        /// <param name="minLevel">Minimum allowed geohash length (default: 1).</param>
-        /// <param name="maxLevel">Maximum allowed geohash length (default: 12).</param>
-        /// <returns>Compressed list of geohashes.</returns>
-        public List<string> Compress(string[] hashes, int minLevel = 1, int maxLevel = 12)
+        public List<string> Compress(IEnumerable<string> geohashes, int minLevel = 1, int maxLevel = 12)
         {
-            var geohashSet = new HashSet<string>(hashes);
-            var compressedGeohashes = new HashSet<string>();
+            if (geohashes == null) throw new ArgumentNullException(nameof(geohashes));
 
-            while (true)
+            // 1. Pre-process: Filter empty, Truncate length, Remove strict duplicates
+            var inputSet = new HashSet<string>();
+            foreach (var hash in geohashes)
             {
-                var newCompressedGeohashes = GetCompressedGeohashes(geohashSet, minLevel, maxLevel);
-                if (compressedGeohashes.SetEquals(newCompressedGeohashes))
-                {
-                    break;
-                }
-                compressedGeohashes = newCompressedGeohashes;
-                geohashSet = new HashSet<string>(compressedGeohashes); // Update geohashSet to reflect compressed state
+                if (string.IsNullOrEmpty(hash)) continue;
+
+                // Truncate if exceeding limits
+                string h = hash.Length > maxLevel ? hash.Substring(0, maxLevel) : hash;
+                inputSet.Add(h);
             }
 
-            return compressedGeohashes.ToList();
-        }
+            // 2. Prune Redundancies (Top-Down)
+            // e.g., Input: {"y0", "y01", "z2"} -> "y01" is inside "y0", so remove "y01".
+            // We sort by length so we process parents ("y0") before children ("y01").
+            var sortedCandidates = inputSet.OrderBy(x => x.Length).ToList();
+            var prunedSet = new HashSet<string>();
 
-        private HashSet<string> GetCompressedGeohashes(HashSet<string> geohashSet, int minLevel, int maxLevel)
-        {
-            var compressedGeohashes = new HashSet<string>();
-
-            foreach (var geohash in geohashSet)
+            foreach (var hash in sortedCandidates)
             {
-                if (geohash.Length < minLevel)
+                // Check if we have already processed a parent of this hash
+                bool isRedundant = false;
+                for (int i = 1; i < hash.Length; i++)
                 {
-                    compressedGeohashes.Add(geohash); // Add short geohashes as is
-                    continue;
+                    // Check prefixes: e.g. for "y01", check "y", "y0"
+                    if (prunedSet.Contains(hash.Substring(0, i)))
+                    {
+                        isRedundant = true;
+                        break;
+                    }
                 }
 
-                var parentGeohash = GetParentGeohash(geohash);
-                if (parentGeohash != null && AreAllSubhashesPresent(geohashSet, parentGeohash))
+                // If no parent exists in the set, this is a significant geohash
+                if (!isRedundant)
                 {
-                    compressedGeohashes.Add(parentGeohash);
-                }
-                else
-                {
-                    compressedGeohashes.Add(LimitGeohashLength(geohash, maxLevel));
+                    prunedSet.Add(hash);
                 }
             }
 
-            return compressedGeohashes;
+            // 3. Recursive Compression (Bottom-Up)
+            // Find groups of 32 siblings and merge them into the parent.
+
+            if (prunedSet.Count == 0) return new List<string>();
+
+            int currentMaxDepth = prunedSet.Max(x => x.Length);
+
+            // Iterate from deepest level up to (minLevel + 1)
+            // We cannot compress a hash of length == minLevel (or shorter)
+            for (int len = currentMaxDepth; len > minLevel; len--)
+            {
+                // Get all hashes at current depth
+                var levelHashes = prunedSet.Where(x => x.Length == len).ToList();
+
+                // Group by parent string (substring 0..len-1)
+                // e.g. "a0", "a1"... group under "a"
+                var groups = levelHashes.GroupBy(x => x.Substring(0, len - 1));
+
+                foreach (var group in groups)
+                {
+                    // In Geohash Base32, a full grid has exactly 32 cells.
+                    if (group.Count() == 32)
+                    {
+                        string parent = group.Key;
+
+                        // Remove all 32 children from the result set
+                        foreach (var child in group)
+                        {
+                            prunedSet.Remove(child);
+                        }
+
+                        // Add the parent to the result set
+                        // The parent acts as a candidate for the next iteration (len - 1)
+                        prunedSet.Add(parent);
+                    }
+                }
+            }
+
+            return prunedSet.OrderBy(x => x).ToList();
         }
-
-        private string GetParentGeohash(string geohash) => geohash.Length > 1 ? geohash.Substring(0, geohash.Length - 1) : null;
-
-        private bool AreAllSubhashesPresent(HashSet<string> geohashSet, string parentGeohash)
-            => _geohasher.GetSubhashes(parentGeohash).All(geohashSet.Contains);
-
-        private string LimitGeohashLength(string geohash, int maxLength) => geohash.Length > maxLength ? geohash.Substring(0, maxLength) : geohash;
     }
 }
