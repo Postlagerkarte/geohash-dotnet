@@ -391,7 +391,7 @@ namespace Geohash.Tests
                 new Coordinate(0, 0), new Coordinate(1, 0), new Coordinate(1, 1), new Coordinate(0, 1), new Coordinate(0, 0)
             }));
             // ACT & ASSERT
-            Assert.Throws<AggregateException>(() => _sut.GetHashes(polygon, precision, PolygonHasher.GeohashInclusionCriteria.Intersects));
+            Assert.Throws<ArgumentOutOfRangeException>(() => _sut.GetHashes(polygon, precision, PolygonHasher.GeohashInclusionCriteria.Intersects));
         }
 
         [Fact]
