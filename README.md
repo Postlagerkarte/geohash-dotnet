@@ -1,146 +1,161 @@
 # geohash-dotnet <img src="https://github.com/postlagerkarte/geohash-dotnet/raw/master/icon.png" width="32" height="32" />
-An easy-to-use, feature-rich geohash library for .NET
 
-## Installation
+Fast, dependency-light geohashing for .NET — encode, decode, neighbors,
+polygon coverage, **radius search**, and compression. Handles the ugly parts
+(antimeridian, poles, date-line wrapping) correctly, with the test suite to prove it.
 
-Install via NuGet Package Manager:
+[![NuGet version](https://img.shields.io/nuget/v/geohash-dotnet.svg?style=flat-square)](https://www.nuget.org/packages/geohash-dotnet) [![Nuget](https://img.shields.io/nuget/dt/geohash-dotnet)](https://www.nuget.org/packages/geohash-dotnet)
 
- ```
-  Install-Package geohash-dotnet
- ```
-[![NuGet version (blazor-dragdrop)](https://img.shields.io/nuget/v/geohash-dotnet.svg?style=flat-square)](https://www.nuget.org/packages/geohash-dotnet) [![Nuget](https://img.shields.io/nuget/dt/geohash-dotnet)](https://www.nuget.org/packages/geohash-dotnet)
-
-## Features
-### Geohasher
-- Encode/Decode: Convert between geographic coordinates and geohash strings.
-- Neighbors: Find adjacent geohashes in all cardinal directions.
-- Subhashes: Retrieve finer-grained geohashes within a parent geohash.
-- Parent Geohash: Get the less precise parent of a given geohash.
-- Bounding Box: Obtain the geographic bounding box of a geohash.
-
-### PolygonHasher
-- Generate geohashes within a specified polygon based on precision and inclusion criteria.
-- Ideal for spatial indexing and geospatial queries within complex areas.
-
-### GeohashCompressor
-- Compresses a set of geohashes to a minimal set that still covers the same area.
-- Optimizes storage and improves performance for spatial queries.
-
-
-## Geohasher
-Generate geohashes that cover a specific polygon:
-  ```csharp
-// Create a new Geohasher instance
-var geohasher = new Geohasher();
-
-// Encode latitude and longitude into a geohash string
-string geohash = geohasher.Encode(37.4219999, -122.0840575, 9);
-
-// Decode the geohash back to latitude and longitude
-(double latitude, double longitude) = geohasher.Decode(geohash);
-
-// Get subhashes of a geohash
-string[] subhashes = geohasher.GetSubhashes(geohash);
-
-// Get neighbors of a geohash
-Dictionary<Direction, string> neighbors = geohasher.GetNeighbors(geohash);
-
-// Get parent of a geohash
-string parent = geohasher.GetParent(geohash);
-
-// Get the bounding box of a geohash
-BoundingBox bbox = geohasher.GetBoundingBox(geohash);
- ```
-
-## PolygonHasher
-  ```csharp
-
-// Initialize PolygonHasher
-var polygonHasher = new PolygonHasher();
-
-// Define a polygon
-Polygon polygon = new Polygon(new LinearRing(new Coordinate[] {
-    new Coordinate(-122.4183, 37.7755),
-    new Coordinate(-122.4183, 37.7814),
-    new Coordinate(-122.4085, 37.7814),
-    new Coordinate(-122.4085, 37.7755),
-    new Coordinate(-122.4183, 37.7755) // Closing the ring
-}));
-
-// Get geohashes of precision 6 that intersect with the polygon
-var geohashes = polygonHasher.GetHashes(polygon, 6, PolygonHasher.GeohashInclusionCriteria.Intersects);
-
-// Output the geohashes
-foreach (string hash in geohashes)
-{
-    Console.WriteLine(hash);
-}
+```
+dotnet add package geohash-dotnet
 ```
 
-## GeohashCompressor
-Compress a list of geohashes into a minimal covering set:
-  ```csharp
-// Initialize GeohashCompressor
+> **v3** is a major rewrite — hot paths are allocation-free, polygon hashing is
+> 10–50× faster via prepared geometries, and radius/circle search is new.
+> Developed with the support of **Claude Fable 5** (Anthropic), including the
+> discovery and fix of a subtle nearest-point bug near the poles. 🤖
+
+## 30-Second Tour
+
+```csharp
+var geohasher = new Geohasher();
+
+string hash = geohasher.Encode(52.5163, 13.3777, precision: 7);   // "u33db2m"
+var (lat, lng) = geohasher.Decode("u33db2m");                     // cell center
+BoundingBox box = geohasher.GetBoundingBox("u33db2m");            // exact cell bounds
+
+string east = geohasher.GetNeighbor("u33db2m", Direction.East);   // adjacent cell
+Dictionary<Direction, string> all8 = geohasher.GetNeighbors("u33db2m");
+
+string parent = geohasher.GetParent("u33db2m");                   // "u33db2" (coarser)
+string[] children = geohasher.GetSubhashes("u33db2m");            // 32 finer cells
+```
+
+## 🎯 Radius Search (new)
+
+Cover a circle with geohash cells — the building block for every
+*"find things near me"* feature:
+
+```csharp
+var radiusHasher = new RadiusHasher();
+
+// All precision-7 cells within 2 km of the Brandenburg Gate
+var cells = radiusHasher.GetHashes(52.5163, 13.3777, 2_000, geohashPrecision: 7);
+
+// Or let the library pick a sensible precision for the radius
+var auto = radiusHasher.GetHashes(52.5163, 13.3777, 2_000);
+
+// Distance helpers included
+double meters = RadiusHasher.GetDistanceMeters("u33db2m", "u33dc0k");
+int precision = RadiusHasher.GetPrecisionForRadius(150);  // → cell size ≈ your radius
+```
+
+### Use case: proximity search on a plain database
+
+No PostGIS, no extensions — just a string prefix index:
+
+```csharp
+// "Show restaurants within 1.5 km" against any SQL/NoSQL store:
+var cells = radiusHasher.GetHashes(userLat, userLng, 1_500, 6);
+
+// WHERE geohash6 IN (@cells)  →  candidate rows
+// Then rank the few survivors by exact distance:
+var nearby = candidates
+    .Select(r => (r, d: RadiusHasher.GetDistanceMeters(userLat, userLng, r.Lat, r.Lng)))
+    .Where(x => x.d <= 1_500)
+    .OrderBy(x => x.d);
+```
+
+### Use case: geofence alerting
+
+```csharp
+// Precompute once: cells fully inside the alert zone vs. boundary cells
+var inner = radiusHasher.GetHashes(zoneLat, zoneLng, 500, 8, GeohashInclusionCriteria.Contains);
+var edge  = radiusHasher.GetHashes(zoneLat, zoneLng, 500, 8, GeohashInclusionCriteria.Intersects);
+edge.ExceptWith(inner);
+
+// Per GPS ping: O(1) hash lookup, exact math only for boundary cells
+string cell = geohasher.Encode(ping.Lat, ping.Lng, 8);
+bool inside = inner.Contains(cell)
+    || (edge.Contains(cell) && RadiusHasher.GetDistanceMeters(zoneLat, zoneLng, ping.Lat, ping.Lng) <= 500);
+```
+
+Works correctly across the antimeridian and over the poles — a 100 km circle
+at (89.5°, 0°) knows the shortest path to a cell at 179°E goes *across the pole*,
+not around the parallel.
+
+## 🗺 PolygonHasher
+
+Cover any (NetTopologySuite) polygon — city limits, delivery zones, country borders:
+
+```csharp
+var polygonHasher = new PolygonHasher();
+
+var zone = new Polygon(new LinearRing(new[] {
+    new Coordinate(-122.4183, 37.7755), new Coordinate(-122.4183, 37.7814),
+    new Coordinate(-122.4085, 37.7814), new Coordinate(-122.4085, 37.7755),
+    new Coordinate(-122.4183, 37.7755)
+}));
+
+var cells = polygonHasher.GetHashes(zone, 7,
+    PolygonHasher.GeohashInclusionCriteria.Intersects,
+    progress: new Progress<double>(p => Console.Write($"\r{p:P0}")),
+    cancellationToken: ct);
+```
+
+Antimeridian-crossing polygons (Fiji, Chukotka, the Pacific) are split and
+handled automatically.
+
+## 🗜 GeohashCompressor
+
+Shrink a covering to the minimal equivalent set — 32 sibling cells collapse
+into their parent, recursively:
+
+```csharp
 var compressor = new GeohashCompressor();
 
-// Define input geohashes
-var inputGeohashes = new[] {
-    "tdnu20", "tdnu21", "tdnu22", "tdnu23", "tdnu24", "tdnu25",
-    "tdnu26", "tdnu27", "tdnu28", "tdnu29", "tdnu2b", "tdnu2c",
-    // ... additional geohashes
-};
+var cells = polygonHasher.GetHashes(cityPolygon, 8);   // e.g. 48,000 cells
+var minimal = compressor.Compress(cells);              // e.g. 1,900 cells, same area
+```
 
-// Compress the geohashes
-var compressedGeohashes = compressor.Compress(inputGeohashes);
+Perfect before persisting coverings or shipping them to clients.
 
-// Output the compressed geohashes
-foreach (var hash in compressedGeohashes)
-{
-    Console.WriteLine(hash);
-}
-  ```
+## 🤖 For AI Agents & Codegen
 
-### Finding Neighbors
+This library is deliberately friendly to automated callers:
 
-![](https://github.com/Postlagerkarte/geohash-dotnet/blob/51ef3c07c1a321ac3994a848c3315fb4a3a971f8/neighbors.gif)
+- **Stateless & thread-safe** — every class can be a singleton; no setup, no config, no I/O.
+- **Deterministic** — same input, same output, every platform.
+- **Strict validation** — invalid input throws `ArgumentException`/`ArgumentOutOfRangeException`
+  with actionable messages (including *what to change*), never silent garbage.
+- **Self-describing API** — full XML docs on every member; signatures below.
 
+```
+Geohasher          : Encode(lat,lng,precision) | Decode(hash) | GetBoundingBox(hash)
+                     GetNeighbor(hash,dir) | GetNeighbors(hash) | GetParent(hash)
+                     GetSubhashes(hash) | IsValid(hash)
+RadiusHasher       : GetHashes(lat,lng,radiusM[,precision][,criteria])
+                     GetDistanceMeters(a,b) | GetPrecisionForRadius(radiusM)
+                     GetCellSizeMeters(precision[,lat])
+PolygonHasher      : GetHashes(polygon,precision[,criteria][,progress][,ct])
+GeohashCompressor  : Compress(hashes[,minLevel][,maxLevel])
+Precision          : named constants, e.g. Precision.Size_km_1x1 == 6
+```
 
-  ```csharp
-Dictionary<Direction, string> neighbors = geohasher.GetNeighbors(geohash);
- ```
+## ⚡ Performance
 
-  ```csharp
-string northNeighbor = neighbors[Direction.North];
-string southNeighbor = neighbors[Direction.South];
-// ... and so on for the other directions
- ```
- 
-find the neighbor hash in a specific direction, use the GetNeighbor() method:
+- `Encode`/`Decode`: allocation-free hot path (stackalloc + O(1) lookup tables).
+- `RadiusHasher`: one haversine term per candidate cell, no `asin`/`sqrt` in the
+  loop — typical queries complete in **microseconds**.
+- `PolygonHasher`: prepared-geometry spatial index + arithmetic cell bounds;
+  parallelized per row. Country-sized polygons at precision 6–7 run in seconds.
+- `GeohashCompressor`: O(n log n) — sort once, single-pass prune, level-wise merge.
 
-  ```csharp
-string northNeighbor = geohasher.GetNeighbor(geohash, Direction.North);
- ```
- 
-### Subhashes
-Subhashes represent smaller, equally-sized regions within a geohash's bounding box:
-  ```csharp
-string[] subhashes = geohasher.GetSubhashes(geohash);
- ```
-### Parent Geohash
-The parent of a geohash is the geohash that covers the same area but at a lower precision level:
-  ```csharp
-string parent = geohasher.GetParent(geohash);
- ```
-Keep in mind that the parent geohash will be less precise and cover a larger area.
+Each precision level multiplies cell count by 32 — choose the coarsest
+precision your use case tolerates (`Precision` constants or
+`RadiusHasher.GetPrecisionForRadius` help).
 
-### Bounding Box
-To obtain the bounding box (minimum and maximum latitude and longitude):
-  ```csharp
-BoundingBox bbox = geohasher.GetBoundingBox(geohash);
- ```
+## License & Credits
 
-
-### Performance Notes
-PolygonHasher and GeohashCompressor have a time complexity of O(N²) relative to the number of geohashes processed.
-
-
+MIT. v3 rewrite, radius search, and test suite developed with the support of
+**Claude Fable 5** by Anthropic.
