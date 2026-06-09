@@ -1,7 +1,6 @@
 using NetTopologySuite.Geometries;
-using NetTopologySuite.Operation.Polygonize;
+using NetTopologySuite.Geometries.Prepared;
 using System;
-using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
@@ -15,31 +14,21 @@ namespace Geohash
     /// </summary>
     public class PolygonHasher
     {
-        private const int MinGeohashPrecision = 1;
-        private const int MaxGeohashPrecision = 12;
-        private static readonly Geohasher _geohasher = new Geohasher();
+        private static readonly Geohasher Hasher = new Geohasher();
 
+        /// <summary>Criteria deciding whether a geohash cell belongs to the result.</summary>
         public enum GeohashInclusionCriteria
         {
-            /// <summary>
-            /// Geohash cell must be entirely within the polygon.
-            /// </summary>
+            /// <summary>Geohash cell must be entirely within the polygon.</summary>
             Contains,
 
-            /// <summary>
-            /// Geohash cell may partially overlap the polygon boundary.
-            /// </summary>
+            /// <summary>Geohash cell may partially overlap the polygon boundary.</summary>
             Intersects
         }
 
-        /// <summary>
-        /// Grid information for processing a polygon.
-        /// </summary>
         private readonly struct PolygonGridInfo
         {
             public Polygon Polygon { get; init; }
-            public double LatStep { get; init; }
-            public double LngStep { get; init; }
             public int StartLatIdx { get; init; }
             public int EndLatIdx { get; init; }
             public int StartLngIdx { get; init; }
@@ -50,7 +39,7 @@ namespace Geohash
         /// Generates geohashes covering the specified polygon.
         /// </summary>
         /// <param name="polygon">Must be valid; antimeridian-crossing polygons are automatically split.</param>
-        /// <param name="geohashPrecision">1-12; higher precision = smaller cells = exponentially more results.</param>
+        /// <param name="geohashPrecision">1–12; each level multiplies the cell count by 32.</param>
         /// <param name="geohashInclusionCriteria">Whether cells must be fully contained or just intersecting.</param>
         /// <param name="progress">Reports 0.0 to 1.0; updates throttled to 1% increments.</param>
         /// <param name="cancellationToken">Token to cancel the operation.</param>
@@ -62,294 +51,232 @@ namespace Geohash
             IProgress<double> progress = null,
             CancellationToken cancellationToken = default)
         {
-            // Validate inputs
-            if (polygon == null)
-                throw new ArgumentNullException(nameof(polygon));
-
-            if (geohashPrecision < MinGeohashPrecision || geohashPrecision > MaxGeohashPrecision)
+            if (polygon == null) throw new ArgumentNullException(nameof(polygon));
+            if (geohashPrecision < 1 || geohashPrecision > Geohasher.MaxPrecision)
                 throw new ArgumentOutOfRangeException(nameof(geohashPrecision),
-                    $"Precision must be between {MinGeohashPrecision} and {MaxGeohashPrecision}");
+                    $"Precision must be between 1 and {Geohasher.MaxPrecision}.");
+
+            var results = new HashSet<string>(StringComparer.Ordinal);
 
             if (polygon.IsEmpty)
             {
                 progress?.Report(1.0);
-                return new HashSet<string>();
+                return results;
             }
 
             if (!polygon.IsValid)
-                throw new ArgumentException("Polygon must be valid", nameof(polygon));
+                throw new ArgumentException("Polygon must be valid.", nameof(polygon));
 
-            // Handle antimeridian crossing
-            List<Polygon> polys = HandleAntimeridian(polygon);
-
-            // Filter out any invalid polygons
-            polys = polys.Where(p => p != null && !p.IsEmpty && p.IsValid).ToList();
+            var polys = HandleAntimeridian(polygon)
+                .Where(p => p != null && !p.IsEmpty && p.IsValid)
+                .ToList();
 
             if (polys.Count == 0)
             {
                 progress?.Report(1.0);
-                return new HashSet<string>();
+                return results;
             }
 
-            var concurrentGeohashes = new ConcurrentBag<string>();
-            bool checkContains = geohashInclusionCriteria == GeohashInclusionCriteria.Contains;
-            bool checkIntersects = geohashInclusionCriteria == GeohashInclusionCriteria.Intersects;
+            // Cell dimensions: a hash of precision p has 5p bits, split lon-first.
+            int totalBits = 5 * geohashPrecision;
+            double latStep = 180.0 / (1L << (totalBits / 2));
+            double lngStep = 360.0 / (1L << ((totalBits + 1) / 2));
 
-            // Calculate grid parameters for each polygon
             long totalSteps = 0;
-            var polyInfos = new List<PolygonGridInfo>();
+            var polyInfos = new List<PolygonGridInfo>(polys.Count);
 
             foreach (var poly in polys)
             {
-                var envelope = poly.EnvelopeInternal;
-
-                // Geohash precision determines cell dimensions
-                int totalBits = 5 * geohashPrecision;
-                int numLonBits = (totalBits + 1) / 2;
-                int numLatBits = totalBits / 2;
-                double latStep = 180.0 / Math.Pow(2, numLatBits);
-                double lngStep = 360.0 / Math.Pow(2, numLonBits);
-
-                // Expand envelope by half a cell to catch edge-touching geohashes
-                envelope.ExpandBy(lngStep / 2, latStep / 2);
-
+                var envelope = poly.EnvelopeInternal.Copy();
+                envelope.ExpandBy(lngStep / 2, latStep / 2); // catch edge-touching cells
                 envelope = new Envelope(
-                    Math.Max(envelope.MinX, -180.0),
-                    Math.Min(envelope.MaxX, 180.0),
-                    Math.Max(envelope.MinY, -90.0),
-                    Math.Min(envelope.MaxY, 90.0)
-                );
+                    Math.Max(envelope.MinX, -180.0), Math.Min(envelope.MaxX, 180.0),
+                    Math.Max(envelope.MinY, -90.0), Math.Min(envelope.MaxY, 90.0));
 
-                // Convert envelope bounds to grid indices for iteration
-                int startLatIdx = (int)Math.Floor(envelope.MinY / latStep);
-                int endLatIdx = (int)Math.Ceiling(envelope.MaxY / latStep);
-                int startLngIdx = (int)Math.Floor(envelope.MinX / lngStep);
-                int endLngIdx = (int)Math.Ceiling(envelope.MaxX / lngStep);
-
-                totalSteps += Math.Max(endLatIdx - startLatIdx, 0);
-                polyInfos.Add(new PolygonGridInfo
+                // The geohash grid is aligned at 0°, so cell i spans [i*step, (i+1)*step).
+                var info = new PolygonGridInfo
                 {
                     Polygon = poly,
-                    LatStep = latStep,
-                    LngStep = lngStep,
-                    StartLatIdx = startLatIdx,
-                    EndLatIdx = endLatIdx,
-                    StartLngIdx = startLngIdx,
-                    EndLngIdx = endLngIdx
-                });
+                    StartLatIdx = (int)Math.Floor(envelope.MinY / latStep),
+                    EndLatIdx = (int)Math.Ceiling(envelope.MaxY / latStep),
+                    StartLngIdx = (int)Math.Floor(envelope.MinX / lngStep),
+                    EndLngIdx = (int)Math.Ceiling(envelope.MaxX / lngStep),
+                };
+
+                totalSteps += Math.Max(info.EndLatIdx - info.StartLatIdx, 0);
+                polyInfos.Add(info);
             }
 
             if (totalSteps == 0)
             {
                 progress?.Report(1.0);
-                return new HashSet<string>();
+                return results;
             }
 
             long completedSteps = 0;
             int lastReportedPercent = -1;
+            var sync = new object();
+            var parallelOptions = new ParallelOptions { CancellationToken = cancellationToken };
+            bool checkContains = geohashInclusionCriteria == GeohashInclusionCriteria.Contains;
 
-            var parallelOptions = new ParallelOptions
+            foreach (var info in polyInfos)
             {
-                CancellationToken = cancellationToken
-            };
+                cancellationToken.ThrowIfCancellationRequested();
 
-            try
-            {
-                foreach (var info in polyInfos)
-                {
-                    cancellationToken.ThrowIfCancellationRequested();
+                // Prepared geometries cache an edge index, making repeated spatial
+                // predicates dramatically faster. Thread-safe for reads in NTS 2.x.
+                var prepared = PreparedGeometryFactory.Prepare(info.Polygon);
+                var envelope = info.Polygon.EnvelopeInternal;
+                var factory = info.Polygon.Factory ?? GeometryFactory.Default;
 
-                    Parallel.For(info.StartLatIdx, info.EndLatIdx, parallelOptions, latIdx =>
+                Parallel.For(
+                    info.StartLatIdx, info.EndLatIdx, parallelOptions,
+                    static () => new List<string>(),
+                    (latIdx, _, local) =>
                     {
-                        var factory = new GeometryFactory();
-                        double lat = latIdx * info.LatStep;
+                        double cellMinLat = latIdx * latStep;
+                        double cellMaxLat = cellMinLat + latStep;
 
                         for (int lngIdx = info.StartLngIdx; lngIdx < info.EndLngIdx; lngIdx++)
                         {
-                            double lng = lngIdx * info.LngStep;
-                            string curGeohash = _geohasher.Encode(lat, lng, geohashPrecision);
+                            double cellMinLng = lngIdx * lngStep;
+                            double cellMaxLng = cellMinLng + lngStep;
 
-                            var bbox = _geohasher.GetBoundingBox(curGeohash);
-                            var geohashPoly = CreateBoundingBoxPolygon(factory, bbox);
+                            // Cheap envelope rejection before any geometry allocation.
+                            if (cellMaxLng < envelope.MinX || cellMinLng > envelope.MaxX ||
+                                cellMaxLat < envelope.MinY || cellMinLat > envelope.MaxY)
+                                continue;
 
-                            if ((checkContains && info.Polygon.Contains(geohashPoly)) ||
-                                (checkIntersects && info.Polygon.Intersects(geohashPoly)))
+                            var cell = CreateCellPolygon(factory, cellMinLng, cellMinLat, cellMaxLng, cellMaxLat);
+
+                            bool match = checkContains
+                                ? prepared.Contains(cell)
+                                : prepared.Intersects(cell);
+
+                            if (match)
                             {
-                                concurrentGeohashes.Add(curGeohash);
+                                // Encode the cell center; only pay for Encode on accepted cells.
+                                local.Add(Hasher.Encode(
+                                    cellMinLat + latStep * 0.5,
+                                    cellMinLng + lngStep * 0.5,
+                                    geohashPrecision));
                             }
                         }
 
-                        if (progress != null)
-                        {
-                            long completed = Interlocked.Increment(ref completedSteps);
-                            int percent = (int)(completed * 100 / totalSteps);
-                            int lastPercent = Volatile.Read(ref lastReportedPercent);
-
-                            if (percent > lastPercent)
-                            {
-                                if (Interlocked.CompareExchange(ref lastReportedPercent, percent, lastPercent) == lastPercent)
-                                {
-                                    progress.Report(percent / 100.0);
-                                }
-                            }
-                        }
+                        ReportProgress(progress, ref completedSteps, ref lastReportedPercent, totalSteps);
+                        return local;
+                    },
+                    local =>
+                    {
+                        if (local.Count == 0) return;
+                        lock (sync) results.UnionWith(local);
                     });
-                }
-            }
-            catch (OperationCanceledException)
-            {
-                throw;
             }
 
             progress?.Report(1.0);
-            return new HashSet<string>(concurrentGeohashes);
+            return results;
         }
 
-        /// <summary>
-        /// Creates a polygon from a bounding box.
-        /// </summary>
-        private static Polygon CreateBoundingBoxPolygon(GeometryFactory factory, BoundingBox bbox)
+        private static void ReportProgress(IProgress<double> progress,
+            ref long completedSteps, ref int lastReportedPercent, long totalSteps)
         {
-            var coords = new Coordinate[]
+            if (progress == null) return;
+
+            long completed = Interlocked.Increment(ref completedSteps);
+            int percent = (int)(completed * 100 / totalSteps);
+            int lastPercent = Volatile.Read(ref lastReportedPercent);
+
+            if (percent > lastPercent &&
+                Interlocked.CompareExchange(ref lastReportedPercent, percent, lastPercent) == lastPercent)
             {
-                new Coordinate(bbox.MinLng, bbox.MinLat),
-                new Coordinate(bbox.MinLng, bbox.MaxLat),
-                new Coordinate(bbox.MaxLng, bbox.MaxLat),
-                new Coordinate(bbox.MaxLng, bbox.MinLat),
-                new Coordinate(bbox.MinLng, bbox.MinLat)
-            };
-            return factory.CreatePolygon(coords);
+                progress.Report(percent / 100.0);
+            }
         }
 
-        /// <summary>
-        /// Handles antimeridian crossing by detecting and splitting if necessary.
-        /// </summary>
-        private List<Polygon> HandleAntimeridian(Polygon original)
+        private static Polygon CreateCellPolygon(GeometryFactory factory,
+            double minLng, double minLat, double maxLng, double maxLat)
+        {
+            return factory.CreatePolygon(new[]
+            {
+                new Coordinate(minLng, minLat),
+                new Coordinate(minLng, maxLat),
+                new Coordinate(maxLng, maxLat),
+                new Coordinate(maxLng, minLat),
+                new Coordinate(minLng, minLat)
+            });
+        }
+
+        // ---------- Antimeridian handling (logic unchanged, helpers made static) ----------
+
+        private static List<Polygon> HandleAntimeridian(Polygon original)
         {
             if (original == null || original.IsEmpty)
                 return new List<Polygon>();
 
             var envelope = original.EnvelopeInternal;
-
-            // Check 1: If envelope is within valid bounds and no coordinate jumps, no split needed
             bool envelopeWithinBounds = envelope.MinX >= -180 && envelope.MaxX <= 180;
-            bool hasLargeJump = HasAntimeridianJump(original);
 
-            if (envelopeWithinBounds && !hasLargeJump)
-            {
-                // Normal polygon, no antimeridian issues
+            if (envelopeWithinBounds && !HasAntimeridianJump(original))
                 return new List<Polygon> { original };
-            }
 
-            // Check 2: World-spanning polygons don't need splitting
             if (envelope.Width >= 360.0)
-            {
                 return new List<Polygon> { original };
-            }
 
-            // Polygon crosses antimeridian - needs splitting
             return SplitAntimeridian(original);
         }
 
-        /// <summary>
-        /// Detects if polygon has coordinate jumps indicating antimeridian crossing.
-        /// A jump > 180° between consecutive vertices indicates crossing.
-        /// </summary>
-        private bool HasAntimeridianJump(Polygon polygon)
+        private static bool HasAntimeridianJump(Polygon polygon)
         {
             const double jumpThreshold = 180.0;
 
-            // Check exterior ring
-            var coords = polygon.ExteriorRing.Coordinates;
-            for (int i = 1; i < coords.Length; i++)
-            {
-                double jump = Math.Abs(coords[i].X - coords[i - 1].X);
-                if (jump > jumpThreshold)
-                    return true;
-            }
-
-            // Check interior rings
+            if (RingHasJump(polygon.ExteriorRing, jumpThreshold)) return true;
             foreach (var hole in polygon.InteriorRings)
-            {
-                coords = hole.Coordinates;
-                for (int i = 1; i < coords.Length; i++)
-                {
-                    double jump = Math.Abs(coords[i].X - coords[i - 1].X);
-                    if (jump > jumpThreshold)
-                        return true;
-                }
-            }
-
+                if (RingHasJump(hole, jumpThreshold)) return true;
             return false;
+
+            static bool RingHasJump(LineString ring, double threshold)
+            {
+                var coords = ring.Coordinates;
+                for (int i = 1; i < coords.Length; i++)
+                    if (Math.Abs(coords[i].X - coords[i - 1].X) > threshold)
+                        return true;
+                return false;
+            }
         }
 
-        /// <summary>
-        /// Splits a polygon that crosses the antimeridian into separate valid polygons.
-        /// Uses coordinate unwrapping and half-plane intersection.
-        /// </summary>
-        private List<Polygon> SplitAntimeridian(Polygon original)
+        private static List<Polygon> SplitAntimeridian(Polygon original)
         {
-            var factory = original.Factory ?? new GeometryFactory();
+            var factory = original.Factory ?? GeometryFactory.Default;
 
             try
             {
-                // Step 1: Unwrap coordinates to make polygon continuous
                 var unwrappedShell = UnwrapRing(original.ExteriorRing.Coordinates);
                 var unwrappedHoles = original.InteriorRings
                     .Select(h => UnwrapRing(h.Coordinates))
                     .ToArray();
 
-                // Align holes to shell
                 double shellMinX = unwrappedShell.Min(c => c.X);
                 double shellMaxX = unwrappedShell.Max(c => c.X);
 
                 for (int i = 0; i < unwrappedHoles.Length; i++)
-                {
                     unwrappedHoles[i] = AlignHoleToShell(unwrappedHoles[i], shellMinX, shellMaxX);
-                }
 
-                // Create unwrapped polygon
                 var unwrappedPoly = factory.CreatePolygon(
                     factory.CreateLinearRing(unwrappedShell),
-                    unwrappedHoles.Select(h => factory.CreateLinearRing(h)).ToArray()
-                );
-
-                // Step 2: Determine split meridian(s)
-                double minX = unwrappedShell.Min(c => c.X);
-                double maxX = unwrappedShell.Max(c => c.X);
+                    unwrappedHoles.Select(factory.CreateLinearRing).ToArray());
 
                 var results = new List<Polygon>();
 
-                if (minX < -180 || maxX > 180)
+                if (shellMinX < -180 || shellMaxX > 180)
                 {
-                    // Need to split
-                    double splitLon = maxX > 180 ? 180 : -180;
+                    double splitLon = shellMaxX > 180 ? 180 : -180;
 
-                    var leftHalf = factory.CreatePolygon(new Coordinate[]
-                    {
-                        new Coordinate(-1000, -90),
-                        new Coordinate(-1000, 90),
-                        new Coordinate(splitLon, 90),
-                        new Coordinate(splitLon, -90),
-                        new Coordinate(-1000, -90)
-                    });
+                    var leftHalf = CreateHalfPlane(factory, -1000, splitLon);
+                    var rightHalf = CreateHalfPlane(factory, splitLon, 1000);
 
-                    var rightHalf = factory.CreatePolygon(new Coordinate[]
-                    {
-                        new Coordinate(splitLon, -90),
-                        new Coordinate(splitLon, 90),
-                        new Coordinate(1000, 90),
-                        new Coordinate(1000, -90),
-                        new Coordinate(splitLon, -90)
-                    });
-
-                    var leftPart = SafeIntersection(unwrappedPoly, leftHalf);
-                    var rightPart = SafeIntersection(unwrappedPoly, rightHalf);
-
-                    foreach (var poly in ExtractPolygons(leftPart))
+                    foreach (var poly in ExtractPolygons(SafeIntersection(unwrappedPoly, leftHalf)))
                         results.Add(NormalizePolygon(poly, factory));
-
-                    foreach (var poly in ExtractPolygons(rightPart))
+                    foreach (var poly in ExtractPolygons(SafeIntersection(unwrappedPoly, rightHalf)))
                         results.Add(NormalizePolygon(poly, factory));
                 }
                 else
@@ -361,15 +288,24 @@ namespace Geohash
             }
             catch
             {
-                // Fallback: return original if splitting fails
+                // Fallback: return original if splitting fails.
                 return new List<Polygon> { original };
             }
         }
 
-        /// <summary>
-        /// Unwraps ring coordinates to make them continuous across the antimeridian.
-        /// </summary>
-        private Coordinate[] UnwrapRing(Coordinate[] coords)
+        private static Polygon CreateHalfPlane(GeometryFactory factory, double minX, double maxX)
+        {
+            return factory.CreatePolygon(new[]
+            {
+                new Coordinate(minX, -90),
+                new Coordinate(minX, 90),
+                new Coordinate(maxX, 90),
+                new Coordinate(maxX, -90),
+                new Coordinate(minX, -90)
+            });
+        }
+
+        private static Coordinate[] UnwrapRing(Coordinate[] coords)
         {
             if (coords.Length == 0) return coords;
 
@@ -380,49 +316,35 @@ namespace Geohash
             for (int i = 1; i < coords.Length; i++)
             {
                 double diff = coords[i].X - coords[i - 1].X;
-
                 if (diff > 180) offset -= 360;
                 else if (diff < -180) offset += 360;
-
                 result[i] = new Coordinate(coords[i].X + offset, coords[i].Y);
             }
 
             return result;
         }
 
-        /// <summary>
-        /// Aligns hole coordinates to be within shell bounds.
-        /// </summary>
-        private Coordinate[] AlignHoleToShell(Coordinate[] holeCoords, double shellMinX, double shellMaxX)
+        private static Coordinate[] AlignHoleToShell(Coordinate[] holeCoords, double shellMinX, double shellMaxX)
         {
             double holeMinX = holeCoords.Min(c => c.X);
             double holeMaxX = holeCoords.Max(c => c.X);
 
             double shift = 0;
-            if (holeMinX < shellMinX - 180)
-                shift = 360;
-            else if (holeMaxX > shellMaxX + 180)
-                shift = -360;
+            if (holeMinX < shellMinX - 180) shift = 360;
+            else if (holeMaxX > shellMaxX + 180) shift = -360;
 
-            if (shift == 0)
-                return holeCoords;
-
-            return holeCoords.Select(c => new Coordinate(c.X + shift, c.Y)).ToArray();
+            return shift == 0
+                ? holeCoords
+                : holeCoords.Select(c => new Coordinate(c.X + shift, c.Y)).ToArray();
         }
 
-        /// <summary>
-        /// Performs intersection with error handling.
-        /// </summary>
-        private Geometry SafeIntersection(Geometry a, Geometry b)
+        private static Geometry SafeIntersection(Geometry a, Geometry b)
         {
             try
             {
-                if (a == null || b == null || a.IsEmpty || b.IsEmpty)
-                    return null;
-
+                if (a == null || b == null || a.IsEmpty || b.IsEmpty) return null;
                 var cleanA = a.IsValid ? a : a.Buffer(0);
                 var cleanB = b.IsValid ? b : b.Buffer(0);
-
                 return cleanA.Intersection(cleanB);
             }
             catch
@@ -431,22 +353,16 @@ namespace Geohash
             }
         }
 
-        /// <summary>
-        /// Normalizes polygon coordinates to [-180, 180] range.
-        /// </summary>
-        private Polygon NormalizePolygon(Polygon poly, GeometryFactory factory)
+        private static Polygon NormalizePolygon(Polygon poly, GeometryFactory factory)
         {
-            if (poly == null || poly.IsEmpty)
-                return null;
+            if (poly == null || poly.IsEmpty) return null;
 
             try
             {
                 var env = poly.EnvelopeInternal;
                 double shift = 0;
-
                 if (env.MinX < -180) shift = 360;
                 else if (env.MaxX > 180) shift = -360;
-
                 if (shift == 0) return poly;
 
                 var shellCoords = poly.ExteriorRing.Coordinates
@@ -466,10 +382,7 @@ namespace Geohash
             }
         }
 
-        /// <summary>
-        /// Extracts all polygons from a geometry.
-        /// </summary>
-        private IEnumerable<Polygon> ExtractPolygons(Geometry geometry)
+        private static IEnumerable<Polygon> ExtractPolygons(Geometry geometry)
         {
             if (geometry == null || geometry.IsEmpty)
                 yield break;
@@ -480,20 +393,10 @@ namespace Geohash
                     yield return poly;
                     break;
 
-                case MultiPolygon multi:
-                    for (int i = 0; i < multi.NumGeometries; i++)
-                    {
-                        if (multi.GetGeometryN(i) is Polygon p)
-                            yield return p;
-                    }
-                    break;
-
-                case GeometryCollection collection:
+                case GeometryCollection collection: // also covers MultiPolygon
                     for (int i = 0; i < collection.NumGeometries; i++)
-                    {
                         foreach (var p in ExtractPolygons(collection.GetGeometryN(i)))
                             yield return p;
-                    }
                     break;
             }
         }

@@ -177,7 +177,7 @@ namespace Geohash.Tests
         [Fact]
         public void Encode_Should_Throw_Exception_For_Invalid_Precision()
         {
-            Assert.Throws<ArgumentException>(() => _geohasher.Encode(0, 0, 13));
+            Assert.Throws<ArgumentOutOfRangeException>(() => _geohasher.Encode(0, 0, 13));
         }
 
         [Theory]
