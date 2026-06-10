@@ -16,6 +16,10 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Solution Items", "Solution 
 		azure-pipelines.yml = azure-pipelines.yml
 	EndProjectSection
 EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "playground", "playground", "{12E5C810-18C6-BE57-4EA6-3F3BE821652E}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Geohash.Playground", "playground\Geohash.Playground.csproj", "{FC7479A6-603F-476E-B853-662E5DA97F07}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -50,6 +54,18 @@ Global
 		{03A0BC9B-671D-4C85-B1C0-9712D98A08B6}.Release|x64.Build.0 = Release|Any CPU
 		{03A0BC9B-671D-4C85-B1C0-9712D98A08B6}.Release|x86.ActiveCfg = Release|Any CPU
 		{03A0BC9B-671D-4C85-B1C0-9712D98A08B6}.Release|x86.Build.0 = Release|Any CPU
+		{FC7479A6-603F-476E-B853-662E5DA97F07}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{FC7479A6-603F-476E-B853-662E5DA97F07}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{FC7479A6-603F-476E-B853-662E5DA97F07}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{FC7479A6-603F-476E-B853-662E5DA97F07}.Debug|x64.Build.0 = Debug|Any CPU
+		{FC7479A6-603F-476E-B853-662E5DA97F07}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{FC7479A6-603F-476E-B853-662E5DA97F07}.Debug|x86.Build.0 = Debug|Any CPU
+		{FC7479A6-603F-476E-B853-662E5DA97F07}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{FC7479A6-603F-476E-B853-662E5DA97F07}.Release|Any CPU.Build.0 = Release|Any CPU
+		{FC7479A6-603F-476E-B853-662E5DA97F07}.Release|x64.ActiveCfg = Release|Any CPU
+		{FC7479A6-603F-476E-B853-662E5DA97F07}.Release|x64.Build.0 = Release|Any CPU
+		{FC7479A6-603F-476E-B853-662E5DA97F07}.Release|x86.ActiveCfg = Release|Any CPU
+		{FC7479A6-603F-476E-B853-662E5DA97F07}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -57,6 +73,7 @@ Global
 	GlobalSection(NestedProjects) = preSolution
 		{B60851A6-525F-4B61-B197-815678E3C73F} = {C48DD20E-18BC-47DE-993C-6C7133780E53}
 		{03A0BC9B-671D-4C85-B1C0-9712D98A08B6} = {21BAECFA-E9AA-4B85-84EF-802E4F632F50}
+		{FC7479A6-603F-476E-B853-662E5DA97F07} = {12E5C810-18C6-BE57-4EA6-3F3BE821652E}
 	EndGlobalSection
 	GlobalSection(ExtensibilityGlobals) = postSolution
 		SolutionGuid = {8621C585-99F6-41A2-86C9-BCB0A73609FC}

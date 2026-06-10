@@ -15,6 +15,31 @@ dotnet add package geohash-dotnet
 > Developed with the support of **Claude Fable 5** (Anthropic), including the
 > discovery and fix of a subtle nearest-point bug near the poles. 🤖
 
+## 🛝 Try It Live — the Geohash Playground
+
+**[→ playground: postlagerkarte.github.io/geohash-dotnet](https://postlagerkarte.github.io/geohash-dotnet/)**
+
+The entire library, compiled to WebAssembly, running in your browser — no
+server, no install. Click the planet and watch it turn into cells:
+
+[![Geohash Playground](docs/playground-heart.png)](https://postlagerkarte.github.io/geohash-dotnet/)
+
+- **Explore** — hover to encode live under your cursor, click to pin a cell,
+  see its 8 neighbors, 32 children, and the Z-order curve that explains
+  geohash ordering. Hover the hash characters to walk up the hierarchy.
+- **Radius** — drag a slider and watch `RadiusHasher` cover the circle in
+  real time, including the Arctic preset where cells narrow toward the pole
+  and wrap across the date line.
+- **Polygon** — draw any shape (or cover Paris with a ❤️), then hit
+  *Compress* and watch thousands of cells collapse into a minimal
+  mixed-precision covering.
+
+Every interaction shows the **exact C# you'd write** (copy-paste ready) and
+the **real compute time** measured inside your browser tab.
+
+The playground lives in [`playground/`](playground/) — run it locally with
+`dotnet run --project playground`.
+
 ## 30-Second Tour
 
 ```csharp

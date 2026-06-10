@@ -1,0 +1,1148 @@
+@page "/"
+@using System.Diagnostics
+@using System.Globalization
+@using System.Text
+@using NetTopologySuite.Geometries
+@inject IJSRuntime JS
+@implements IAsyncDisposable
+
+<PageTitle>Geohash Playground · geohash-dotnet</PageTitle>
+
+<div class="shell">
+    <div id="map"></div>
+
+    @if (_busy)
+    {
+        <div class="busybar"></div>
+    }
+
+    <div class="panel topbar">
+        <div class="brand">
+            <img src="icon.png" alt="" />
+            <div>
+                <div class="brand-name">geohash <em>playground</em></div>
+                <div class="brand-sub">geohash-dotnet · live in your browser</div>
+            </div>
+        </div>
+
+        <div class="modes">
+            <button class="mode-btn @(_mode == PlayMode.Explore ? "active" : null)" @onclick="() => SetMode(PlayMode.Explore)">🔍 Explore</button>
+            <button class="mode-btn @(_mode == PlayMode.Radius ? "active" : null)" @onclick="() => SetMode(PlayMode.Radius)">📡 Radius</button>
+            <button class="mode-btn @(_mode == PlayMode.Polygon ? "active" : null)" @onclick="() => SetMode(PlayMode.Polygon)">⬡ Polygon</button>
+        </div>
+
+        <div class="topbar-spacer"></div>
+
+        <div class="wasm-chip" title="The actual NuGet package, compiled to WebAssembly. No server involved.">
+            <span class="wasm-dot"></span> .NET → WASM · zero backend
+        </div>
+
+        <a class="gh-link" href="https://github.com/postlagerkarte/geohash-dotnet" target="_blank" rel="noopener">
+            <svg viewBox="0 0 16 16"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>
+            <span>GitHub</span>
+        </a>
+    </div>
+
+    <div class="panel controls">
+        <div class="controls-scroll">
+
+            @if (_mode == PlayMode.Explore)
+            {
+                <div class="ctl-section">
+                    <div class="ctl-label"><span>Precision</span><span class="ctl-value">p@(_explorePrecision) · @PlaygroundGeo.CellSize(_explorePrecision, _selLat ?? 50)</span></div>
+                    <input type="range" min="1" max="12" value="@_explorePrecision" style="--fill:@(Pct(_explorePrecision, 1, 12))%"
+                           @oninput="OnExplorePrecisionInput" />
+                    <p class="hint">Each character ×32s the resolution — from continents (<b>p1</b>) to fingertips (<b>p12</b>).</p>
+                </div>
+
+                <div class="ctl-section">
+                    <div class="ctl-label"><span>Layers</span></div>
+                    <div class="switch-row">
+                        <span>Neighbors<small>GetNeighbors() — all 8 adjacent cells</small></span>
+                        <div class="switch @(_showNeighbors ? "on" : null)" @onclick="ToggleNeighbors"></div>
+                    </div>
+                    <div class="switch-row">
+                        <span>Children<small>GetSubhashes() — the 32 cells inside</small></span>
+                        <div class="switch @(_showChildren ? "on" : null)" @onclick="ToggleChildren"></div>
+                    </div>
+                    <div class="switch-row">
+                        <span>Z-order curve<small>why cell order zig-zags the planet</small></span>
+                        <div class="switch @(_showZCurve ? "on" : null)" @onclick="ToggleZCurve"></div>
+                    </div>
+                    <div class="switch-row">
+                        <span>Viewport grid<small>tile the whole view with cells</small></span>
+                        <div class="switch @(_showGrid ? "on" : null)" @onclick="ToggleGrid"></div>
+                    </div>
+                </div>
+
+                <div class="ctl-section">
+                    <div class="ctl-label"><span>Places</span></div>
+                    <div class="chips">
+                        <button class="chip" @onclick='() => GoExplore(52.51628, 13.37770, 7, 15)'>🏛 Brandenburg Gate</button>
+                        <button class="chip" @onclick='() => GoExplore(40.68925, -74.04450, 8, 16)'>🗽 Liberty Island</button>
+                        <button class="chip" @onclick='() => GoExplore(35.65858, 139.74543, 9, 17)'>🗼 Tokyo Tower</button>
+                    </div>
+                </div>
+
+                <p class="hint">Move the mouse — every cell under the cursor is encoded live by the library. <b>Click</b> to pin one.</p>
+            }
+            else if (_mode == PlayMode.Radius)
+            {
+                <div class="ctl-section">
+                    <div class="ctl-label"><span>Radius</span><span class="ctl-value">@PlaygroundGeo.Meters(_radiusMeters)</span></div>
+                    <input type="range" min="0" max="1000" value="@_radiusSlider" style="--fill:@(Pct(_radiusSlider, 0, 1000))%"
+                           @oninput="OnRadiusSliderInput" />
+                </div>
+
+                <div class="ctl-section">
+                    <div class="ctl-label">
+                        <span>Precision</span>
+                        <span class="ctl-value">@(_radiusAutoPrecision ? $"auto → p{_radiusEffectivePrecision}" : $"p{_radiusManualPrecision}")</span>
+                    </div>
+                    <div class="switch-row">
+                        <span>Auto<small>GetPrecisionForRadius() picks it</small></span>
+                        <div class="switch @(_radiusAutoPrecision ? "on" : null)" @onclick="ToggleRadiusAuto"></div>
+                    </div>
+                    @if (!_radiusAutoPrecision)
+                    {
+                        <input type="range" min="1" max="12" value="@_radiusManualPrecision" style="--fill:@(Pct(_radiusManualPrecision, 1, 12))%"
+                               @oninput="OnRadiusPrecisionInput" />
+                    }
+                </div>
+
+                <div class="ctl-section">
+                    <div class="ctl-label"><span>Inclusion criteria</span></div>
+                    <div class="seg">
+                        <button class="@(_radiusCriteria == GeohashInclusionCriteria.Intersects ? "active" : null)"
+                                @onclick="() => SetRadiusCriteria(GeohashInclusionCriteria.Intersects)">Intersects</button>
+                        <button class="@(_radiusCriteria == GeohashInclusionCriteria.Contains ? "active" : null)"
+                                @onclick="() => SetRadiusCriteria(GeohashInclusionCriteria.Contains)">Contains</button>
+                    </div>
+                    <p class="hint"><b>Intersects</b> = cells touching the circle. <b>Contains</b> = only cells fully inside.</p>
+                </div>
+
+                <div class="ctl-section">
+                    <div class="ctl-label"><span>Try</span></div>
+                    <div class="chips">
+                        <button class="chip" @onclick='() => GoRadius(48.85660, 2.35220, 1500)'>🥐 Cafés near Paris</button>
+                        <button class="chip" @onclick='() => GoRadius(25.06880, -77.33930, 60_000)'>🏝 Nassau 60 km</button>
+                        <button class="chip" @onclick='() => GoRadius(80.5, 179.5, 150_000)'>🧊 Arctic date line</button>
+                    </div>
+                </div>
+
+                <p class="hint">@(_radiusCenter is null ? "Click the map to drop a center — then drag the slider." : "Drag the slider, or click to move the center.")</p>
+            }
+            else
+            {
+                <div class="ctl-section">
+                    <div class="ctl-label"><span>Shape</span></div>
+                    @if (!_drawing)
+                    {
+                        <div class="btn-row">
+                            <button class="btn" @onclick="StartDraw">✏️ Draw a polygon</button>
+                        </div>
+                        <div style="height:8px"></div>
+                        <div class="chips">
+                            <button class="chip" @onclick="GoHeart">❤️ Heart over Paris</button>
+                            <button class="chip" @onclick="GoFiji">🏝 Fiji · date line</button>
+                        </div>
+                    }
+                    else
+                    {
+                        <p class="hint" style="margin-bottom:8px">Click to add vertices (<b>@_drawVertexCount</b> so far) — double-click or hit Finish. <b>Esc</b> cancels.</p>
+                        <div class="btn-row">
+                            <button class="btn" disabled="@(_drawVertexCount < 3)" @onclick="FinishDraw">Finish</button>
+                            <button class="btn ghost" @onclick="CancelDraw">Cancel</button>
+                        </div>
+                    }
+                </div>
+
+                <div class="ctl-section">
+                    <div class="ctl-label">
+                        <span>Precision</span>
+                        <span class="ctl-value">@(_polyAutoPrecision ? $"auto → p{_polyEffectivePrecision}" : $"p{_polyManualPrecision}")</span>
+                    </div>
+                    <div class="switch-row">
+                        <span>Auto<small>sized to keep the map snappy</small></span>
+                        <div class="switch @(_polyAutoPrecision ? "on" : null)" @onclick="TogglePolyAuto"></div>
+                    </div>
+                    @if (!_polyAutoPrecision)
+                    {
+                        <input type="range" min="1" max="9" value="@_polyManualPrecision" style="--fill:@(Pct(_polyManualPrecision, 1, 9))%"
+                               @oninput="OnPolyPrecisionInput" />
+                    }
+                </div>
+
+                <div class="ctl-section">
+                    <div class="ctl-label"><span>Inclusion criteria</span></div>
+                    <div class="seg">
+                        <button class="@(_polyCriteria == PolygonHasher.GeohashInclusionCriteria.Intersects ? "active" : null)"
+                                @onclick="() => SetPolyCriteria(PolygonHasher.GeohashInclusionCriteria.Intersects)">Intersects</button>
+                        <button class="@(_polyCriteria == PolygonHasher.GeohashInclusionCriteria.Contains ? "active" : null)"
+                                @onclick="() => SetPolyCriteria(PolygonHasher.GeohashInclusionCriteria.Contains)">Contains</button>
+                    </div>
+                </div>
+
+                <div class="ctl-section">
+                    <div class="switch-row">
+                        <span>Compress<small>GeohashCompressor — merge 32 siblings into parents</small></span>
+                        <div class="switch @(_compress ? "on" : null)" @onclick="ToggleCompress"></div>
+                    </div>
+                    @if (_compress && _compressedCount > 0)
+                    {
+                        <p class="hint"><b>@PlaygroundGeo.Num(_cellCount)</b> cells → <b>@PlaygroundGeo.Num(_compressedCount)</b> cells, same area. Colors show the mixed precisions.</p>
+                    }
+                </div>
+            }
+        </div>
+    </div>
+
+    @if (_mode == PlayMode.Explore && _selHash is not null)
+    {
+        <div class="panel hash-panel">
+            <div class="hash-tiles" @onmouseout="ClearLit">
+                @for (var i = 0; i < _selHash.Length; i++)
+                {
+                    var idx = i;
+                    <span class="tile @(idx <= _litTo ? "lit" : null)" @key="@($"{_selHash}-{idx}")"
+                          @onmouseover="() => LitTile(idx)" @onclick="() => TruncateTo(idx)">@_selHash[idx]</span>
+                }
+            </div>
+            <div class="hash-meta">
+                <span class="mono">@FormatLatLng(_selLat!.Value, _selLng!.Value)</span>
+                <span>cell <b>@PlaygroundGeo.CellSize(_selHash.Length, _selLat!.Value)</b></span>
+                <span><b>@Pow32(_selHash.Length)</b> cells tile Earth at p@(_selHash.Length)</span>
+            </div>
+            <div class="hash-hint">hover a character to see its ancestor cell · click one to climb the hierarchy</div>
+        </div>
+    }
+
+    <div class="panel codepanel">
+        <div class="stats">
+            <div class="stat"><div class="v">@_stat1.v</div><div class="k">@_stat1.k</div></div>
+            <div class="stat"><div class="v">@_stat2.v</div><div class="k">@_stat2.k</div></div>
+            <div class="stat"><div class="v">@_stat3.v</div><div class="k">@_stat3.k</div></div>
+        </div>
+        <div class="code-head">
+            <div class="code-title">Live C# <span class="dotnet">geohash-dotnet</span></div>
+            <button class="copy-btn @(_copied ? "ok" : null)" @onclick="CopyCode">@(_copied ? "✓ copied" : "copy")</button>
+        </div>
+        <div class="code-scroll">
+            <pre class="code">@_snippetHtml</pre>
+        </div>
+    </div>
+
+    @if (_toast is not null)
+    {
+        <div class="toast @(_toastInfo ? "info" : null)">@((MarkupString)_toast)</div>
+    }
+</div>
+
+@code {
+    private enum PlayMode { Explore, Radius, Polygon }
+
+    private static readonly Geohasher Hasher = new();
+    private static readonly RadiusHasher Radius = new();
+    private static readonly PolygonHasher PolyHasher = new();
+    private static readonly GeohashCompressor Compressor = new();
+    private static readonly GeometryFactory Geo = new();
+
+    private IJSObjectReference? _mod;
+    private DotNetObjectReference<Home>? _self;
+
+    private PlayMode _mode = PlayMode.Explore;
+    private bool _busy;
+    private bool _copied;
+    private string? _toast;
+    private bool _toastInfo;
+    private CancellationTokenSource? _toastCts;
+    private CancellationTokenSource? _debounceCts;
+
+    // viewport
+    private (double S, double W, double N, double E, double Z) _view = (-60, -150, 75, 170, 3);
+
+    // explore
+    private int _explorePrecision = 6;
+    private bool _showNeighbors = true, _showChildren, _showZCurve, _showGrid = true;
+    private string? _selHash;
+    private double? _selLat, _selLng;
+    private int _litTo = -1;
+
+    // radius
+    private int _radiusSlider = 320;             // log slider position → ~1.5 km
+    private double _radiusMeters = 1500;
+    private bool _radiusAutoPrecision = true;
+    private int _radiusManualPrecision = 6;
+    private int _radiusEffectivePrecision = 7;
+    private GeohashInclusionCriteria _radiusCriteria = GeohashInclusionCriteria.Intersects;
+    private (double Lat, double Lng)? _radiusCenter;
+
+    // polygon
+    private bool _drawing;
+    private int _drawVertexCount;
+    private bool _polyAutoPrecision = true;
+    private int _polyManualPrecision = 6;
+    private int _polyEffectivePrecision = 6;
+    private PolygonHasher.GeohashInclusionCriteria _polyCriteria = PolygonHasher.GeohashInclusionCriteria.Intersects;
+    private bool _compress;
+    private List<(double Lat, double Lng)>? _polyPoints;
+
+    // results
+    private long _cellCount;
+    private long _compressedCount;
+    private double _elapsedMs;
+
+    private (string v, string k) _stat1 = ("—", "cells"), _stat2 = ("—", "time"), _stat3 = ("—", "precision");
+    private MarkupString _snippetHtml;
+    private string _snippetPlain = "";
+
+    public sealed record HoverInfo(string H, double S, double W, double N, double E);
+
+    protected override void OnInitialized() => RefreshSnippet();
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        _mod = await JS.InvokeAsync<IJSObjectReference>("import", "./js/map.js");
+        _self = DotNetObjectReference.Create(this);
+        await _mod.InvokeVoidAsync("init", "map", _self);
+        await ApplyUrlStateAsync();
+    }
+
+    // ── JS callbacks ────────────────────────────────────────────
+
+    [JSInvokable]
+    public async Task OnMapClick(double lat, double lng)
+    {
+        switch (_mode)
+        {
+            case PlayMode.Explore:
+                await SelectCellAsync(lat, lng, _explorePrecision, zoomIfTiny: true);
+                break;
+            case PlayMode.Radius:
+                _radiusCenter = (lat, lng);
+                await ComputeRadiusAsync(fit: false);
+                break;
+        }
+        StateHasChanged();
+    }
+
+    [JSInvokable]
+    public HoverInfo? OnHover(double lat, double lng)
+    {
+        if (_busy) return null;
+        int p = _mode switch
+        {
+            PlayMode.Explore => _explorePrecision,
+            PlayMode.Radius => _radiusAutoPrecision ? RadiusHasher.GetPrecisionForRadius(_radiusMeters, lat) : _radiusManualPrecision,
+            _ => _polyEffectivePrecision,
+        };
+        string h = Hasher.Encode(lat, lng, p);
+        var b = Hasher.GetBoundingBox(h);
+
+        // Keep the ghost cell on the world copy under the cursor.
+        double shift = Math.Round((lng - b.CenterLng) / 360.0) * 360.0;
+        return new HoverInfo(h, b.MinLat, b.MinLng + shift, b.MaxLat, b.MaxLng + shift);
+    }
+
+    [JSInvokable]
+    public async Task OnViewChanged(double s, double w, double n, double e, double zoom)
+    {
+        _view = (s, w, n, e, zoom);
+        if (_mode == PlayMode.Explore && _showGrid) await RedrawGridAsync();
+    }
+
+    [JSInvokable]
+    public Task OnDrawProgress(int count)
+    {
+        _drawVertexCount = count;
+        StateHasChanged();
+        return Task.CompletedTask;
+    }
+
+    [JSInvokable]
+    public Task OnDrawCancelled()
+    {
+        _drawing = false;
+        _drawVertexCount = 0;
+        StateHasChanged();
+        return Task.CompletedTask;
+    }
+
+    [JSInvokable]
+    public async Task OnPolygonDrawn(double[] flatLatLngs)
+    {
+        _drawing = false;
+        _drawVertexCount = 0;
+        var pts = new List<(double Lat, double Lng)>(flatLatLngs.Length / 2);
+        for (int i = 0; i + 1 < flatLatLngs.Length; i += 2)
+            pts.Add((flatLatLngs[i], flatLatLngs[i + 1]));
+        pts.Add(pts[0]);
+        _polyPoints = pts;
+        await DrawActivePolygonAsync();
+        await ComputePolygonAsync(fit: false);
+        StateHasChanged();
+    }
+
+    // ── Explore ─────────────────────────────────────────────────
+
+    private async Task SelectCellAsync(double lat, double lng, int precision, bool zoomIfTiny = false)
+    {
+        var sw = Stopwatch.StartNew();
+        string hash = Hasher.Encode(lat, lng, precision);
+        sw.Stop();
+
+        _selHash = hash;
+        var box = Hasher.GetBoundingBox(hash);
+        _selLat = box.CenterLat;
+        _selLng = box.CenterLng;
+        _elapsedMs = sw.Elapsed.TotalMilliseconds;
+
+        await Js("drawSelection", box.MinLat, box.MinLng, box.MaxLat, box.MaxLng, zoomIfTiny);
+        await RedrawExploreLayersAsync();
+        RefreshStats();
+        RefreshSnippet();
+        await SaveUrlAsync();
+    }
+
+    private async Task RedrawExploreLayersAsync()
+    {
+        if (_selHash is null) return;
+
+        if (_showNeighbors)
+        {
+            var items = Hasher.GetNeighbors(_selHash).Select(kv =>
+            {
+                var b = Hasher.GetBoundingBox(kv.Value);
+                return new { h = kv.Value, dir = Abbrev(kv.Key), s = b.MinLat, w = b.MinLng, n = b.MaxLat, e = b.MaxLng };
+            }).ToArray();
+            await Js("drawNeighbors", (object)items);
+        }
+        else await Js("clearLayer", "neighbors");
+
+        if (_showChildren && _selHash.Length < Geohasher.MaxPrecision)
+        {
+            var items = Hasher.GetSubhashes(_selHash).Select(h =>
+            {
+                var b = Hasher.GetBoundingBox(h);
+                return new { p = _selHash, c = h[^1].ToString(), s = b.MinLat, w = b.MinLng, n = b.MaxLat, e = b.MaxLng };
+            }).ToArray();
+            await Js("drawChildren", (object)items);
+        }
+        else await Js("clearLayer", "children");
+
+        if (_showZCurve && _selHash.Length >= 2)
+        {
+            var pts = Hasher.GetSubhashes(Hasher.GetParent(_selHash))
+                .SelectMany(h => { var (la, lo) = Hasher.Decode(h); return new[] { la, lo }; })
+                .ToArray();
+            await Js("drawZCurve", pts);
+        }
+        else await Js("clearLayer", "zcurve");
+    }
+
+    private async Task RedrawGridAsync()
+    {
+        if (_mod is null) return;
+        int p = PlaygroundGeo.PickGridPrecision(_view.S, _view.W, _view.N, _view.E, 1100);
+        var cells = PlaygroundGeo.EnumerateGrid(_view.S, _view.W, _view.N, _view.E, p, 1300);
+
+        var bounds = new double[cells.Count * 4];
+        var hashes = new string[cells.Count];
+        for (int i = 0; i < cells.Count; i++)
+        {
+            bounds[i * 4] = cells[i].S; bounds[i * 4 + 1] = cells[i].W;
+            bounds[i * 4 + 2] = cells[i].N; bounds[i * 4 + 3] = cells[i].E;
+            hashes[i] = cells[i].Hash;
+        }
+
+        await Js("drawCells", "grid", bounds, hashes, new
+        {
+            color = "#8b94a7",
+            weight = 0.7,
+            opacity = 0.4,
+            fillOpacity = 0.012,
+            labels = true,
+            animate = false,
+        });
+    }
+
+    private async Task GoExplore(double lat, double lng, int precision, int zoom)
+    {
+        _explorePrecision = precision;
+        await Js("flyTo", lat, lng, zoom);
+        await SelectCellAsync(lat, lng, precision);
+    }
+
+    private async Task OnExplorePrecisionInput(ChangeEventArgs e)
+    {
+        _explorePrecision = int.Parse((string)e.Value!, CultureInfo.InvariantCulture);
+        if (_selLat is not null)
+            await SelectCellAsync(_selLat.Value, _selLng!.Value, _explorePrecision);
+        else
+            RefreshSnippet();
+    }
+
+    private async Task LitTile(int idx)
+    {
+        _litTo = idx;
+        if (_selHash is null) return;
+        var b = Hasher.GetBoundingBox(_selHash[..(idx + 1)]);
+        await Js("drawOutline", "ancestor", b.MinLat, b.MinLng, b.MaxLat, b.MaxLng, "#a78bfa", 1.8, "6 5", 0.05);
+    }
+
+    private async Task ClearLit()
+    {
+        _litTo = -1;
+        await Js("clearLayer", "ancestor");
+    }
+
+    private async Task TruncateTo(int idx)
+    {
+        if (_selHash is null || idx + 1 >= _selHash.Length) return;
+        _explorePrecision = idx + 1;
+        var b = Hasher.GetBoundingBox(_selHash[..(idx + 1)]);
+        await Js("clearLayer", "ancestor");
+        await SelectCellAsync(b.CenterLat, b.CenterLng, _explorePrecision);
+        await Js("fitBounds", b.MinLat, b.MinLng, b.MaxLat, b.MaxLng);
+    }
+
+    private async Task ToggleNeighbors() { _showNeighbors = !_showNeighbors; await RedrawExploreLayersAsync(); RefreshSnippet(); }
+    private async Task ToggleChildren() { _showChildren = !_showChildren; await RedrawExploreLayersAsync(); RefreshSnippet(); }
+    private async Task ToggleZCurve() { _showZCurve = !_showZCurve; await RedrawExploreLayersAsync(); }
+
+    private async Task ToggleGrid()
+    {
+        _showGrid = !_showGrid;
+        if (_showGrid) await RedrawGridAsync();
+        else await Js("clearLayer", "grid");
+    }
+
+    // ── Radius ──────────────────────────────────────────────────
+
+    private static double SliderToMeters(int slider) => 50.0 * Math.Pow(2_000_000.0 / 50.0, slider / 1000.0);
+
+    private static int MetersToSlider(double meters) =>
+        (int)Math.Clamp(Math.Round(Math.Log(meters / 50.0) / Math.Log(2_000_000.0 / 50.0) * 1000.0), 0, 1000);
+
+    private async Task OnRadiusSliderInput(ChangeEventArgs e)
+    {
+        _radiusSlider = int.Parse((string)e.Value!, CultureInfo.InvariantCulture);
+        _radiusMeters = SliderToMeters(_radiusSlider);
+        await DebouncedAsync(110, () => ComputeRadiusAsync(fit: false));
+    }
+
+    private async Task OnRadiusPrecisionInput(ChangeEventArgs e)
+    {
+        _radiusManualPrecision = int.Parse((string)e.Value!, CultureInfo.InvariantCulture);
+        await DebouncedAsync(110, () => ComputeRadiusAsync(fit: false));
+    }
+
+    private async Task DebouncedAsync(int ms, Func<Task> action)
+    {
+        _debounceCts?.Cancel();
+        var cts = _debounceCts = new CancellationTokenSource();
+        try
+        {
+            await Task.Delay(ms, cts.Token);
+            await action();
+            StateHasChanged();
+        }
+        catch (TaskCanceledException) { }
+    }
+
+    private async Task ToggleRadiusAuto() { _radiusAutoPrecision = !_radiusAutoPrecision; await ComputeRadiusAsync(fit: false); }
+    private async Task SetRadiusCriteria(GeohashInclusionCriteria c) { _radiusCriteria = c; await ComputeRadiusAsync(fit: false); }
+
+    private async Task GoRadius(double lat, double lng, double meters)
+    {
+        _radiusCenter = (lat, lng);
+        _radiusMeters = meters;
+        _radiusSlider = MetersToSlider(meters);
+        _radiusAutoPrecision = true;
+        await ComputeRadiusAsync(fit: true);
+    }
+
+    private async Task ComputeRadiusAsync(bool fit)
+    {
+        if (_radiusCenter is null || _mod is null) { RefreshSnippet(); return; }
+        var (lat, lng) = _radiusCenter.Value;
+
+        int p = _radiusAutoPrecision
+            ? RadiusHasher.GetPrecisionForRadius(_radiusMeters, lat)
+            : _radiusManualPrecision;
+        _radiusEffectivePrecision = p;
+
+        // Soft cap so the browser stays smooth — the library itself happily goes further.
+        var (cw, ch) = RadiusHasher.GetCellSizeMeters(p, lat);
+        double estimate = Math.PI * _radiusMeters * _radiusMeters / (cw * ch);
+        if (estimate > 60_000)
+        {
+            ShowToast($"That would be ≈ <b>{PlaygroundGeo.Num((long)estimate)}</b> cells — a bit much for one browser tab. Lower the precision or shrink the radius.", info: true);
+            return;
+        }
+
+        await RunBusyAsync(async () =>
+        {
+            var sw = Stopwatch.StartNew();
+            var cells = Radius.GetHashes(lat, lng, _radiusMeters, p, _radiusCriteria);
+            sw.Stop();
+
+            _elapsedMs = sw.Elapsed.TotalMilliseconds;
+            _cellCount = cells.Count;
+            _compressedCount = 0;
+
+            var sorted = cells.ToList();
+            sorted.Sort(StringComparer.Ordinal);
+            var (bounds, _) = ToBounds(sorted, lng);
+
+            await Js("drawCells", "cells", bounds, Array.Empty<string>(), new
+            {
+                color = "#22d3ee",
+                weight = 1.0,
+                opacity = 0.8,
+                fillOpacity = 0.14,
+                animate = true,
+            });
+            await Js("drawCircle", lat, lng, _radiusMeters);
+
+            if (fit && bounds.Length >= 4)
+            {
+                double s = double.MaxValue, w = double.MaxValue, n = double.MinValue, e = double.MinValue;
+                for (int i = 0; i < bounds.Length; i += 4)
+                {
+                    s = Math.Min(s, bounds[i]); w = Math.Min(w, bounds[i + 1]);
+                    n = Math.Max(n, bounds[i + 2]); e = Math.Max(e, bounds[i + 3]);
+                }
+                await Js("fitBounds", s, w, n, e);
+            }
+        });
+
+        RefreshStats();
+        RefreshSnippet();
+        await SaveUrlAsync();
+    }
+
+    // ── Polygon ─────────────────────────────────────────────────
+
+    private async Task StartDraw()
+    {
+        _drawing = true;
+        _drawVertexCount = 0;
+        _polyPoints = null;
+        await Js("clearShapes");
+        await Js("startDraw");
+    }
+
+    private async Task FinishDraw() => await Js("finishDraw");
+
+    private async Task CancelDraw()
+    {
+        _drawing = false;
+        _drawVertexCount = 0;
+        await Js("cancelDraw");
+    }
+
+    private async Task TogglePolyAuto() { _polyAutoPrecision = !_polyAutoPrecision; await ComputePolygonAsync(fit: false); }
+    private async Task SetPolyCriteria(PolygonHasher.GeohashInclusionCriteria c) { _polyCriteria = c; await ComputePolygonAsync(fit: false); }
+    private async Task ToggleCompress() { _compress = !_compress; await ComputePolygonAsync(fit: false); }
+
+    private async Task OnPolyPrecisionInput(ChangeEventArgs e)
+    {
+        _polyManualPrecision = int.Parse((string)e.Value!, CultureInfo.InvariantCulture);
+        await DebouncedAsync(160, () => ComputePolygonAsync(fit: false));
+    }
+
+    private async Task GoHeart()
+    {
+        _polyPoints = PlaygroundGeo.Heart(48.8665, 2.3450, 9_000);
+        await DrawActivePolygonAsync();
+        await ComputePolygonAsync(fit: true, urlTag: "heart");
+    }
+
+    private async Task GoFiji()
+    {
+        _polyPoints = PlaygroundGeo.Fiji();
+        await DrawActivePolygonAsync();
+        await ComputePolygonAsync(fit: true, urlTag: "fiji");
+    }
+
+    private async Task DrawActivePolygonAsync()
+    {
+        if (_polyPoints is null) return;
+        var flat = _polyPoints.SelectMany(p => new[] { p.Lat, p.Lng }).ToArray();
+        await Js("drawPolygon", flat);
+    }
+
+    private Polygon BuildPolygon()
+    {
+        var coords = _polyPoints!.Select(p => new Coordinate(p.Lng, p.Lat)).ToArray();
+        return Geo.CreatePolygon(coords);
+    }
+
+    private static int PickPolygonPrecision(Polygon poly, double targetCells)
+    {
+        var env = poly.EnvelopeInternal;
+        double midLat = (env.MinY + env.MaxY) / 2.0;
+        double areaM2 = env.Width * 111_195.0 * Math.Max(0.05, Math.Cos(midLat * Math.PI / 180.0))
+                      * env.Height * 111_195.0;
+
+        int best = 1;
+        for (int p = 1; p <= 9; p++)
+        {
+            var (w, h) = RadiusHasher.GetCellSizeMeters(p, midLat);
+            if (areaM2 / (w * h) > targetCells) break;
+            best = p;
+        }
+        return best;
+    }
+
+    private async Task ComputePolygonAsync(bool fit, string? urlTag = null)
+    {
+        if (_polyPoints is null || _mod is null) { RefreshSnippet(); return; }
+
+        Polygon poly;
+        try { poly = BuildPolygon(); }
+        catch (Exception ex) { ShowToast($"NetTopologySuite rejected that ring: <b>{ex.Message}</b>"); return; }
+
+        int p = _polyAutoPrecision ? PickPolygonPrecision(poly, 5_000) : _polyManualPrecision;
+        _polyEffectivePrecision = p;
+
+        var env = poly.EnvelopeInternal;
+        var (cw, ch) = RadiusHasher.GetCellSizeMeters(p, (env.MinY + env.MaxY) / 2);
+        double estimate = env.Width * 111_195.0 * env.Height * 111_195.0 / (cw * ch);
+        if (estimate > 70_000)
+        {
+            ShowToast($"≈ <b>{PlaygroundGeo.Num((long)estimate)}</b> candidate cells — that's benchmark territory, not browser territory. Try a lower precision.", info: true);
+            return;
+        }
+
+        await RunBusyAsync(async () =>
+        {
+            List<string> sorted;
+            try
+            {
+                var sw = Stopwatch.StartNew();
+                var cells = PolyHasher.GetHashes(poly, p, _polyCriteria);
+                sw.Stop();
+                _elapsedMs = sw.Elapsed.TotalMilliseconds;
+                _cellCount = cells.Count;
+                sorted = cells.ToList();
+                sorted.Sort(StringComparer.Ordinal);
+            }
+            catch (ArgumentException ex)
+            {
+                ShowToast($"The library said no: <b>{ex.Message}</b>");
+                return;
+            }
+
+            double centerLng = (_polyPoints[0].Lng + _polyPoints[^1].Lng) / 2.0;
+
+            if (_compress)
+            {
+                var sw2 = Stopwatch.StartNew();
+                var compressed = Compressor.Compress(sorted);
+                sw2.Stop();
+                _elapsedMs += sw2.Elapsed.TotalMilliseconds;
+                _compressedCount = compressed.Count;
+
+                int minLen = compressed.Min(h => h.Length);
+                int maxLen = compressed.Max(h => h.Length);
+                bool first = true;
+                foreach (var lvl in compressed.GroupBy(h => h.Length).OrderBy(g => g.Key))
+                {
+                    var (bounds, _) = ToBounds(lvl.ToList(), centerLng);
+                    double t = maxLen == minLen ? 0.5 : (lvl.Key - minLen) / (double)(maxLen - minLen);
+                    await Js("drawCells", "cells", bounds, Array.Empty<string>(), new
+                    {
+                        color = PlaygroundGeo.LevelColor(t),
+                        weight = 1.2,
+                        opacity = 0.9,
+                        fillOpacity = 0.16,
+                        animate = false,
+                        append = !first,
+                    });
+                    first = false;
+                }
+            }
+            else
+            {
+                _compressedCount = 0;
+                var (bounds, _) = ToBounds(sorted, centerLng);
+                await Js("drawCells", "cells", bounds, Array.Empty<string>(), new
+                {
+                    color = "#22d3ee",
+                    weight = 0.9,
+                    opacity = 0.75,
+                    fillOpacity = 0.13,
+                    animate = true,
+                });
+            }
+
+            if (fit)
+                await Js("fitBounds", env.MinY, env.MinX, env.MaxY, env.MaxX);
+        });
+
+        RefreshStats();
+        RefreshSnippet();
+        await SaveUrlAsync(urlTag);
+    }
+
+    // ── Shared plumbing ─────────────────────────────────────────
+
+    /// <summary>Bounding boxes for hashes, shifted onto the world copy near <paramref name="anchorLng"/>.</summary>
+    private static (double[] bounds, string[] hashes) ToBounds(List<string> sorted, double anchorLng)
+    {
+        var bounds = new double[sorted.Count * 4];
+        var hashes = new string[sorted.Count];
+        for (int i = 0; i < sorted.Count; i++)
+        {
+            var b = Hasher.GetBoundingBox(sorted[i]);
+            double shift = Math.Round((anchorLng - b.CenterLng) / 360.0) * 360.0;
+            bounds[i * 4] = b.MinLat;
+            bounds[i * 4 + 1] = b.MinLng + shift;
+            bounds[i * 4 + 2] = b.MaxLat;
+            bounds[i * 4 + 3] = b.MaxLng + shift;
+            hashes[i] = sorted[i];
+        }
+        return (bounds, hashes);
+    }
+
+    private async Task RunBusyAsync(Func<Task> work)
+    {
+        _busy = true;
+        StateHasChanged();
+        await Task.Delay(20); // let the busy bar paint before the sync compute blocks the thread
+        try { await work(); }
+        finally { _busy = false; }
+    }
+
+    private async Task SetMode(PlayMode mode)
+    {
+        if (_mode == mode) return;
+        _mode = mode;
+        _drawing = false;
+        await Js("setMode", mode.ToString().ToLowerInvariant());
+        await Js("clearShapes");
+
+        if (mode == PlayMode.Explore)
+        {
+            if (_showGrid) await RedrawGridAsync();
+            if (_selHash is not null)
+            {
+                var b = Hasher.GetBoundingBox(_selHash);
+                await Js("drawSelection", b.MinLat, b.MinLng, b.MaxLat, b.MaxLng);
+                await RedrawExploreLayersAsync();
+            }
+        }
+        else
+        {
+            await Js("clearLayer", "grid");
+            if (mode == PlayMode.Radius && _radiusCenter is not null) await ComputeRadiusAsync(fit: false);
+            if (mode == PlayMode.Polygon && _polyPoints is not null) { await DrawActivePolygonAsync(); await ComputePolygonAsync(fit: false); }
+        }
+
+        RefreshStats();
+        RefreshSnippet();
+        await SaveUrlAsync();
+    }
+
+    private async Task Js(string fn, params object?[] args)
+    {
+        if (_mod is null) return;
+        try { await _mod.InvokeVoidAsync(fn, args); }
+        catch (JSDisconnectedException) { }
+        catch (ObjectDisposedException) { }
+    }
+
+    private void ShowToast(string html, bool info = false)
+    {
+        _toast = html;
+        _toastInfo = info;
+        _toastCts?.Cancel();
+        var cts = _toastCts = new CancellationTokenSource();
+        _ = HideToastLaterAsync(cts.Token);
+    }
+
+    private async Task HideToastLaterAsync(CancellationToken ct)
+    {
+        try
+        {
+            await Task.Delay(6000, ct);
+            _toast = null;
+            await InvokeAsync(StateHasChanged);
+        }
+        catch (TaskCanceledException) { }
+    }
+
+    private async Task CopyCode()
+    {
+        if (_mod is null) return;
+        await _mod.InvokeAsync<bool>("copyText", _snippetPlain);
+        _copied = true;
+        StateHasChanged();
+        await Task.Delay(1400);
+        _copied = false;
+    }
+
+    // ── Stats + snippet ─────────────────────────────────────────
+
+    private void RefreshStats()
+    {
+        switch (_mode)
+        {
+            case PlayMode.Explore:
+                _stat1 = (_selHash is null ? "—" : $"p{_selHash.Length}", "precision");
+                _stat2 = (_selHash is null ? "—" : PlaygroundGeo.CellSize(_selHash.Length, _selLat ?? 0).Split('×')[0].Trim(), "cell width");
+                _stat3 = (_selHash is null ? "—" : PlaygroundGeo.Duration(_elapsedMs), "encode time");
+                break;
+            case PlayMode.Radius:
+                _stat1 = (_cellCount == 0 ? "—" : PlaygroundGeo.Num(_cellCount), "cells");
+                _stat2 = (_cellCount == 0 ? "—" : PlaygroundGeo.Duration(_elapsedMs), "time · wasm");
+                _stat3 = ($"p{_radiusEffectivePrecision}", _radiusAutoPrecision ? "precision · auto" : "precision");
+                break;
+            case PlayMode.Polygon:
+                _stat1 = (_cellCount == 0 ? "—" : PlaygroundGeo.Num(_cellCount), "cells");
+                _stat2 = (_cellCount == 0 ? "—" : PlaygroundGeo.Duration(_elapsedMs), "time · wasm");
+                _stat3 = _compress && _compressedCount > 0
+                    ? (PlaygroundGeo.Num(_compressedCount), $"compressed · {((double)_cellCount / _compressedCount).ToString("0.#", CultureInfo.InvariantCulture)}×")
+                    : ($"p{_polyEffectivePrecision}", "precision");
+                break;
+        }
+    }
+
+    private void RefreshSnippet()
+    {
+        var sb = new StringBuilder();
+        switch (_mode)
+        {
+            case PlayMode.Explore: BuildExploreSnippet(sb); break;
+            case PlayMode.Radius: BuildRadiusSnippet(sb); break;
+            case PlayMode.Polygon: BuildPolygonSnippet(sb); break;
+        }
+        _snippetPlain = sb.ToString();
+        _snippetHtml = CSharpHighlighter.Highlight(_snippetPlain);
+    }
+
+    private void BuildExploreSnippet(StringBuilder sb)
+    {
+        sb.AppendLine("var geohasher = new Geohasher();");
+        sb.AppendLine();
+        if (_selHash is null)
+        {
+            sb.AppendLine($"// click the map → Encode(lat, lng, precision: {_explorePrecision})");
+            sb.AppendLine($"string hash = geohasher.Encode(52.51628, 13.37770, {_explorePrecision});");
+            return;
+        }
+
+        sb.AppendLine($"string hash = geohasher.Encode({Fmt(_selLat!.Value)}, {Fmt(_selLng!.Value)}, {_selHash.Length});");
+        sb.AppendLine($"// → \"{_selHash}\"  ·  encoded in {PlaygroundGeo.Duration(_elapsedMs)}");
+        sb.AppendLine();
+        sb.AppendLine($"var (lat, lng) = geohasher.Decode(\"{_selHash}\");");
+        sb.AppendLine($"var box = geohasher.GetBoundingBox(\"{_selHash}\");");
+        sb.AppendLine($"// cell ≈ {PlaygroundGeo.CellSize(_selHash.Length, _selLat.Value)}");
+
+        if (_showNeighbors)
+        {
+            sb.AppendLine();
+            sb.AppendLine($"var neighbors = geohasher.GetNeighbors(\"{_selHash}\");");
+            sb.AppendLine($"// N → \"{Hasher.GetNeighbor(_selHash, Direction.North)}\", E → \"{Hasher.GetNeighbor(_selHash, Direction.East)}\", …");
+        }
+
+        if (_showChildren && _selHash.Length < Geohasher.MaxPrecision)
+        {
+            sb.AppendLine();
+            sb.AppendLine($"string[] children = geohasher.GetSubhashes(\"{_selHash}\");");
+            sb.AppendLine($"// 32 cells: \"{_selHash}0\" … \"{_selHash}z\"");
+        }
+
+        if (_selHash.Length > 1)
+        {
+            sb.AppendLine();
+            sb.AppendLine($"string parent = geohasher.GetParent(\"{_selHash}\");  // \"{_selHash[..^1]}\"");
+        }
+    }
+
+    private void BuildRadiusSnippet(StringBuilder sb)
+    {
+        sb.AppendLine("var radiusHasher = new RadiusHasher();");
+        sb.AppendLine();
+
+        if (_radiusCenter is null)
+        {
+            sb.AppendLine("// click the map to drop a center, then:");
+            sb.AppendLine($"var cells = radiusHasher.GetHashes(lat, lng, {FmtR(_radiusMeters)});");
+            return;
+        }
+
+        var (lat, lng) = _radiusCenter.Value;
+        string criteria = _radiusCriteria == GeohashInclusionCriteria.Contains
+            ? ",\n    GeohashInclusionCriteria.Contains" : "";
+
+        if (_radiusAutoPrecision)
+        {
+            sb.AppendLine($"// precision picked by the library → p{_radiusEffectivePrecision}");
+            sb.AppendLine("var cells = radiusHasher.GetHashes(");
+            sb.AppendLine($"    {Fmt(lat)}, {Fmt(lng)}, radiusMeters: {FmtR(_radiusMeters)}{criteria});");
+        }
+        else
+        {
+            sb.AppendLine("var cells = radiusHasher.GetHashes(");
+            sb.AppendLine($"    {Fmt(lat)}, {Fmt(lng)},");
+            sb.AppendLine($"    radiusMeters: {FmtR(_radiusMeters)}, geohashPrecision: {_radiusEffectivePrecision}{criteria});");
+        }
+
+        if (_cellCount > 0)
+        {
+            sb.AppendLine($"// → {PlaygroundGeo.Num(_cellCount)} cells · {PlaygroundGeo.Duration(_elapsedMs)} (in-browser wasm)");
+            sb.AppendLine();
+            string a = Hasher.Encode(lat, lng, _radiusEffectivePrecision);
+            sb.AppendLine($"double m = RadiusHasher.GetDistanceMeters(\"{a}\", cells.First());");
+            sb.AppendLine();
+            sb.AppendLine("// proximity search on any plain database:");
+            sb.AppendLine($"// WHERE geohash{_radiusEffectivePrecision} IN (@cells) — then rank by exact distance");
+        }
+    }
+
+    private void BuildPolygonSnippet(StringBuilder sb)
+    {
+        sb.AppendLine("var polygonHasher = new PolygonHasher();");
+        sb.AppendLine();
+
+        if (_polyPoints is null)
+        {
+            sb.AppendLine("// draw a polygon (or pick a preset), then:");
+            sb.AppendLine("var cells = polygonHasher.GetHashes(zone, precision,");
+            sb.AppendLine("    PolygonHasher.GeohashInclusionCriteria.Intersects);");
+            return;
+        }
+
+        var p0 = _polyPoints[0];
+        sb.AppendLine("var zone = new GeometryFactory().CreatePolygon(new[] {");
+        sb.AppendLine($"    new Coordinate({Fmt(p0.Lng)}, {Fmt(p0.Lat)}),");
+        sb.AppendLine($"    /* … {_polyPoints.Count - 2} more vertices … */");
+        sb.AppendLine($"    new Coordinate({Fmt(p0.Lng)}, {Fmt(p0.Lat)}),");
+        sb.AppendLine("});");
+        sb.AppendLine();
+        sb.AppendLine($"var cells = polygonHasher.GetHashes(zone, {_polyEffectivePrecision},");
+        sb.AppendLine($"    PolygonHasher.GeohashInclusionCriteria.{_polyCriteria});");
+
+        if (_cellCount > 0)
+            sb.AppendLine($"// → {PlaygroundGeo.Num(_cellCount)} cells · {PlaygroundGeo.Duration(_elapsedMs)} (in-browser wasm)");
+
+        if (_compress)
+        {
+            sb.AppendLine();
+            sb.AppendLine("var compressed = new GeohashCompressor().Compress(cells);");
+            if (_compressedCount > 0)
+                sb.AppendLine($"// → {PlaygroundGeo.Num(_compressedCount)} cells — same coverage, {((double)_cellCount / _compressedCount).ToString("0.#", CultureInfo.InvariantCulture)}× smaller");
+        }
+    }
+
+    // ── URL state ───────────────────────────────────────────────
+
+    private async Task SaveUrlAsync(string? polyTag = null)
+    {
+        string h = _mode switch
+        {
+            PlayMode.Explore => _selHash is null ? "e" : $"e/{_selHash}",
+            PlayMode.Radius when _radiusCenter is not null =>
+                $"r/{Fmt(_radiusCenter.Value.Lat)},{Fmt(_radiusCenter.Value.Lng)},{FmtR(_radiusMeters)},{(_radiusAutoPrecision ? "auto" : _radiusEffectivePrecision.ToString(CultureInfo.InvariantCulture))},{(_radiusCriteria == GeohashInclusionCriteria.Contains ? "c" : "i")}",
+            PlayMode.Polygon when polyTag is not null => $"p/{polyTag}",
+            PlayMode.Radius => "r",
+            _ => "p",
+        };
+        await Js("setUrlHash", h);
+    }
+
+    private async Task ApplyUrlStateAsync()
+    {
+        string hash = "";
+        try { hash = await _mod!.InvokeAsync<string>("getUrlHash"); }
+        catch { return; }
+
+        if (string.IsNullOrEmpty(hash)) return;
+        var parts = hash.Split('/', 2);
+
+        try
+        {
+            switch (parts[0])
+            {
+                case "e" when parts.Length == 2 && Hasher.IsValid(parts[1]):
+                    var b = Hasher.GetBoundingBox(parts[1]);
+                    _explorePrecision = parts[1].Length;
+                    await SelectCellAsync(b.CenterLat, b.CenterLng, parts[1].Length);
+                    await Js("fitBounds", b.MinLat, b.MinLng, b.MaxLat, b.MaxLng);
+                    break;
+
+                case "r" when parts.Length == 2:
+                    var seg = parts[1].Split(',');
+                    if (seg.Length < 3) break;
+                    _mode = PlayMode.Radius;
+                    double lat = double.Parse(seg[0], CultureInfo.InvariantCulture);
+                    double lng = double.Parse(seg[1], CultureInfo.InvariantCulture);
+                    double r = double.Parse(seg[2], CultureInfo.InvariantCulture);
+                    if (seg.Length > 3 && seg[3] != "auto")
+                    {
+                        _radiusAutoPrecision = false;
+                        _radiusManualPrecision = Math.Clamp(int.Parse(seg[3], CultureInfo.InvariantCulture), 1, 12);
+                    }
+                    if (seg.Length > 4 && seg[4] == "c") _radiusCriteria = GeohashInclusionCriteria.Contains;
+                    await GoRadius(Math.Clamp(lat, -90, 90), lng, Math.Clamp(r, 1, 5_000_000));
+                    break;
+
+                case "p" when parts.Length == 2:
+                    _mode = PlayMode.Polygon;
+                    await Js("setMode", "polygon");
+                    if (parts[1] == "heart") await GoHeart();
+                    else if (parts[1] == "fiji") await GoFiji();
+                    break;
+            }
+        }
+        catch (FormatException) { /* malformed deep link — ignore */ }
+
+        RefreshStats();
+        RefreshSnippet();
+        StateHasChanged();
+    }
+
+    // ── Formatting helpers ──────────────────────────────────────
+
+    private static string Fmt(double v) => v.ToString("0.#####", CultureInfo.InvariantCulture);
+    private static string FmtR(double v) => ((long)Math.Round(v)).ToString(CultureInfo.InvariantCulture);
+    private static int Pct(int v, int min, int max) => (int)Math.Round((v - min) * 100.0 / (max - min));
+
+    private static string FormatLatLng(double lat, double lng) =>
+        $"{Math.Abs(lat).ToString("0.0000", CultureInfo.InvariantCulture)}°{(lat >= 0 ? "N" : "S")} {Math.Abs(lng).ToString("0.0000", CultureInfo.InvariantCulture)}°{(lng >= 0 ? "E" : "W")}";
+
+    private static string Abbrev(Direction d) => d switch
+    {
+        Direction.North => "N", Direction.NorthEast => "NE", Direction.East => "E",
+        Direction.SouthEast => "SE", Direction.South => "S", Direction.SouthWest => "SW",
+        Direction.West => "W", _ => "NW",
+    };
+
+    private static readonly string[] Sup = { "⁰", "¹", "²", "³", "⁴", "⁵", "⁶", "⁷", "⁸", "⁹" };
+
+    private static string Pow32(int p)
+    {
+        double v = Math.Pow(32, p);
+        int exp = (int)Math.Floor(Math.Log10(v));
+        double mant = v / Math.Pow(10, exp);
+        string supExp = string.Concat(exp.ToString(CultureInfo.InvariantCulture).Select(c => Sup[c - '0']));
+        return $"{mant.ToString("0.#", CultureInfo.InvariantCulture)}×10{supExp}";
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        _toastCts?.Cancel();
+        _debounceCts?.Cancel();
+        if (_mod is not null)
+        {
+            try { await _mod.InvokeVoidAsync("dispose"); await _mod.DisposeAsync(); }
+            catch (JSDisconnectedException) { }
+            catch (ObjectDisposedException) { }
+        }
+        _self?.Dispose();
+    }
+}

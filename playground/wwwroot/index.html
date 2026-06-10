@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Geohash Playground · geohash-dotnet</title>
+    <meta name="description" content="Interactive geohash playground — encode, explore neighbors, cover circles and polygons with cells, compress coverings. The geohash-dotnet library running live in your browser via .NET WebAssembly." />
+    <meta property="og:title" content="Geohash Playground · geohash-dotnet" />
+    <meta property="og:description" content="Click the planet, watch it turn into geohash cells. The full .NET library running in your browser — no server." />
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="https://postlagerkarte.github.io/geohash-dotnet/" />
+    <meta property="og:image" content="https://raw.githubusercontent.com/postlagerkarte/geohash-dotnet/master/docs/playground-heart.png" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <base href="/" />
+    <link rel="icon" type="image/png" href="icon.png" />
+    <link rel="preload" id="webassembly" />
+
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet" />
+
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+          integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+            integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+
+    <link rel="stylesheet" href="css/app.css" />
+    <script type="importmap"></script>
+</head>
+
+<body>
+    <div id="app">
+        <div class="boot">
+            <div class="boot-mark">
+                <span>u</span><span>3</span><span>3</span><span>d</span><span>b</span><span>2</span><span>m</span>
+            </div>
+            <div class="boot-title">Geohash Playground</div>
+            <div class="boot-sub">loading the .NET runtime into your browser…</div>
+            <div class="boot-bar"><div class="boot-bar-fill"></div></div>
+        </div>
+    </div>
+
+    <div id="blazor-error-ui">
+        Something went sideways.
+        <a href="." class="reload">Reload</a>
+        <span class="dismiss">🗙</span>
+    </div>
+    <script src="_framework/blazor.webassembly#[.{fingerprint}].js"></script>
+</body>
+
+</html>
