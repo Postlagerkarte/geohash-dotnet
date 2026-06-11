@@ -8,7 +8,7 @@
 
 <PageTitle>Geohash Playground · geohash-dotnet</PageTitle>
 
-<div class="shell">
+<div class="shell @(_tourActive ? "touring" : null)">
     <div id="map"></div>
 
     @if (_busy)
@@ -32,6 +32,11 @@
         </div>
 
         <div class="topbar-spacer"></div>
+
+        @if (!_tourActive)
+        {
+            <button class="gh-link" @onclick="StartTourAsync" title="A 60-second guided intro to geohashes">✨ <span>Tour</span></button>
+        }
 
         <div class="wasm-chip" title="The actual NuGet package, compiled to WebAssembly. No server involved.">
             <span class="wasm-dot"></span> .NET → WASM · zero backend
@@ -197,7 +202,7 @@
         </div>
     </div>
 
-    @if (_mode == PlayMode.Explore && _selHash is not null)
+    @if (_mode == PlayMode.Explore && _selHash is not null && !_tourActive)
     {
         <div class="panel hash-panel">
             <div class="hash-tiles" @onmouseout="ClearLit">
@@ -217,11 +222,68 @@
         </div>
     }
 
+    @if (_showWelcome && _mode == PlayMode.Explore)
+    {
+        <div class="scrim @(_welcomeBye ? "bye" : null)" @onclick="DismissWelcomeAsync"></div>
+        <div class="welcome @(_welcomeBye ? "bye" : null)">
+            <div class="welcome-title">The planet, tiled into geohash cells</div>
+            <div class="welcome-sub">
+                Move your mouse — every cell under it is encoded <em>live</em> by
+                <b>geohash-dotnet</b> running in your browser. <b>Click</b> to pin one.
+            </div>
+            <div class="welcome-actions">
+                <button class="btn" @onclick="DismissWelcomeAsync">Start exploring</button>
+                <button class="btn ghost" @onclick="StartTourAsync">✨ 60-second tour</button>
+            </div>
+        </div>
+    }
+
+    @if (_tourActive)
+    {
+        <div class="panel tour">
+            <div class="tour-head">
+                <span class="tour-step">@(_tourStep + 1) / @Tour.Length</span>
+                <span class="tour-title">@Tour[_tourStep].Title</span>
+                <button class="tour-skip" @onclick="EndTourAsync">skip ✕</button>
+            </div>
+            <div class="tour-body" @key="_tourStep">
+                @Tour[_tourStep].Body
+                @if (_tourStep == Tour.Length - 1)
+                {
+                    <div class="tour-install">
+                        <code>dotnet add package geohash-dotnet</code>
+                        <button class="copy-btn @(_tourCopied ? "ok" : null)" @onclick="CopyInstallAsync">@(_tourCopied ? "✓" : "copy")</button>
+                    </div>
+                }
+            </div>
+            <div class="tour-nav">
+                <div class="tour-dots">
+                    @for (var i = 0; i < Tour.Length; i++)
+                    {
+                        var idx = i;
+                        <span class="@(idx == _tourStep ? "on" : null)" @onclick="() => RunTourSceneAsync(idx)"></span>
+                    }
+                </div>
+                <div class="tour-btns">
+                    <button class="btn ghost" disabled="@(_tourStep == 0)" @onclick="() => RunTourSceneAsync(_tourStep - 1)">Back</button>
+                    @if (_tourStep < Tour.Length - 1)
+                    {
+                        <button class="btn" @onclick="() => RunTourSceneAsync(_tourStep + 1)">Next</button>
+                    }
+                    else
+                    {
+                        <button class="btn" @onclick="EndTourAsync">Start playing</button>
+                    }
+                </div>
+            </div>
+        </div>
+    }
+
     <div class="panel codepanel">
         <div class="stats">
-            <div class="stat"><div class="v">@_stat1.v</div><div class="k">@_stat1.k</div></div>
-            <div class="stat"><div class="v">@_stat2.v</div><div class="k">@_stat2.k</div></div>
-            <div class="stat"><div class="v">@_stat3.v</div><div class="k">@_stat3.k</div></div>
+            <div class="stat"><div class="v @(Na(_stat1.v))">@_stat1.v</div><div class="k">@_stat1.k</div></div>
+            <div class="stat"><div class="v @(Na(_stat2.v))">@_stat2.v</div><div class="k">@_stat2.k</div></div>
+            <div class="stat"><div class="v @(Na(_stat3.v))">@_stat3.v</div><div class="k">@_stat3.k</div></div>
         </div>
         <div class="code-head">
             <div class="code-title">Live C# <span class="dotnet">geohash-dotnet</span></div>
@@ -296,6 +358,168 @@
     private MarkupString _snippetHtml;
     private string _snippetPlain = "";
 
+    private bool _showWelcome = true;
+    private bool _welcomeBye;
+
+    private static string? Na(string statValue) => statValue == "—" ? "na" : null;
+
+    // ── Tour ────────────────────────────────────────────────────
+
+    private bool _tourActive;
+    private int _tourStep;
+    private bool _tourCopied;
+    private CancellationTokenSource? _tourCts;
+
+    private sealed record TourScene(string Title, MarkupString Body);
+
+    private static readonly TourScene[] Tour =
+    {
+        new("The string is the place", new MarkupString(
+            "A geohash turns latitude/longitude into a short string. <b>u33db2m</b> doesn't " +
+            "<i>point at</i> this rectangle by the Brandenburg Gate — it <em>is</em> this rectangle. " +
+            "Same string, same place, on every system on Earth.")),
+
+        new("One character = 32× sharper", new MarkupString(
+            "Watch the precision climb from <b>p4</b> to <b>p8</b>: each added character splits the cell " +
+            "into 32 smaller ones. And zooming out is just <em>string truncation</em> — the parent of " +
+            "<b>u33db2m</b> is <b>u33db2</b>. No math required.")),
+
+        new("Prefixes are the superpower", new MarkupString(
+            "All 32 cells inside <b>u33db2</b> start with <b>u33db2</b>. So <i>“is it nearby?”</i> becomes " +
+            "<i>“does it share my prefix?”</i> — a plain indexed string comparison that <em>any</em> " +
+            "database can answer. This is the whole reason geohashes exist.")),
+
+        new("The fine print", new MarkupString(
+            "Two points can be meters apart across a cell edge and share <em>no</em> prefix — that's why " +
+            "<b>GetNeighbors()</b> exists. And the pink curve is the <b>Z-order</b>: the path geohashes " +
+            "sort along. Mostly local… with the occasional planet-sized jump.")),
+
+        new("Real use: “cafés within 1.5 km”", new MarkupString(
+            "<b>RadiusHasher</b> covers the circle with cells. Then, on plain SQL, Redis or DynamoDB: " +
+            "<code>WHERE geohash IN (@cells)</code> → rank the few survivors by exact distance. " +
+            "Proximity search with <em>no PostGIS, no extensions</em>.")),
+
+        new("Real use: zones & geofences", new MarkupString(
+            "Cover any shape — then <b>compress</b>: thousands of cells collapse into a minimal " +
+            "mixed-precision set (the colors are the different precisions). Store it once; every GPS ping " +
+            "becomes an <em>O(1) set lookup</em>: inside the zone, or not.")),
+
+        new("Your turn", new MarkupString(
+            "Everything you just watched was computed <em>in this tab</em> by the actual NuGet package — " +
+            "no server involved. Click anything, drag everything; the C# panel always shows the code " +
+            "you'd write.")),
+    };
+
+    private async Task StartTourAsync()
+    {
+        if (_showWelcome) { _welcomeBye = true; _showWelcome = false; }
+        _tourActive = true;
+        await RunTourSceneAsync(0);
+    }
+
+    private async Task EndTourAsync()
+    {
+        _tourCts?.Cancel();
+        _tourActive = false;
+        await SaveUrlAsync();
+        StateHasChanged();
+    }
+
+    private async Task RunTourSceneAsync(int idx)
+    {
+        _tourCts?.Cancel();
+        var cts = _tourCts = new CancellationTokenSource();
+        _tourStep = idx;
+        StateHasChanged();
+
+        try
+        {
+            switch (idx)
+            {
+                case 0: // the string is the place
+                    await TourExploreResetAsync();
+                    _explorePrecision = 7;
+                    await Js("flyTo", 52.51628, 13.37770, 15);
+                    await SelectCellAsync(52.51628, 13.37770, 7);
+                    break;
+
+                case 1: // precision dive p4 → p8
+                    await TourExploreResetAsync();
+                    for (int p = 4; p <= 8; p++)
+                    {
+                        if (cts.Token.IsCancellationRequested) return;
+                        _explorePrecision = p;
+                        await SelectCellAsync(52.51628, 13.37770, p);
+                        var box = Hasher.GetBoundingBox(Hasher.Encode(52.51628, 13.37770, p));
+                        await Js("fitBounds", box.MinLat, box.MinLng, box.MaxLat, box.MaxLng, 18);
+                        StateHasChanged();
+                        await Task.Delay(1500, cts.Token);
+                    }
+                    break;
+
+                case 2: // prefixes: the 32 children of u33db2
+                    await TourExploreResetAsync();
+                    _showChildren = true;
+                    _explorePrecision = 6;
+                    await SelectCellAsync(52.51628, 13.37770, 6);
+                    var sel = Hasher.GetBoundingBox("u33db2");
+                    await Js("fitBounds", sel.MinLat, sel.MinLng, sel.MaxLat, sel.MaxLng, 16);
+                    break;
+
+                case 3: // neighbors + z-order
+                    await TourExploreResetAsync();
+                    _showNeighbors = true;
+                    _showZCurve = true;
+                    _explorePrecision = 7;
+                    await SelectCellAsync(52.51628, 13.37770, 7);
+                    var parent = Hasher.GetBoundingBox("u33db2");
+                    await Js("fitBounds", parent.MinLat, parent.MinLng, parent.MaxLat, parent.MaxLng, 16);
+                    break;
+
+                case 4: // radius use case
+                    await SetModeAsync(PlayMode.Radius, fromUser: false);
+                    await GoRadius(48.85660, 2.35220, 1500);
+                    break;
+
+                case 5: // polygon + compress use case
+                    await SetModeAsync(PlayMode.Polygon, fromUser: false);
+                    _compress = false;
+                    await GoHeart();
+                    await Task.Delay(2200, cts.Token);
+                    if (cts.Token.IsCancellationRequested) return;
+                    _compress = true;
+                    await ComputePolygonAsync(fit: false);
+                    break;
+
+                case 6: // finale — leave the compressed heart on screen
+                    break;
+            }
+        }
+        catch (TaskCanceledException) { }
+        StateHasChanged();
+    }
+
+    private async Task TourExploreResetAsync()
+    {
+        _showNeighbors = false;
+        _showChildren = false;
+        _showZCurve = false;
+        await SetModeAsync(PlayMode.Explore, fromUser: false);
+        await Js("clearLayer", "neighbors");
+        await Js("clearLayer", "children");
+        await Js("clearLayer", "zcurve");
+    }
+
+    private async Task CopyInstallAsync()
+    {
+        if (_mod is null) return;
+        await _mod.InvokeAsync<bool>("copyText", "dotnet add package geohash-dotnet");
+        _tourCopied = true;
+        StateHasChanged();
+        await Task.Delay(1400);
+        _tourCopied = false;
+    }
+
     public sealed record HoverInfo(string H, double S, double W, double N, double E);
 
     protected override void OnInitialized() => RefreshSnippet();
@@ -307,6 +531,24 @@
         _self = DotNetObjectReference.Create(this);
         await _mod.InvokeVoidAsync("init", "map", _self);
         await ApplyUrlStateAsync();
+        _ = AutoDismissWelcomeAsync();
+    }
+
+    private async Task AutoDismissWelcomeAsync()
+    {
+        // Safety valve only — the scrim and CTA give the user explicit control.
+        await Task.Delay(25_000);
+        await InvokeAsync(DismissWelcomeAsync);
+    }
+
+    private async Task DismissWelcomeAsync()
+    {
+        if (!_showWelcome || _welcomeBye) return;
+        _welcomeBye = true;
+        StateHasChanged();
+        await Task.Delay(500);
+        _showWelcome = false;
+        StateHasChanged();
     }
 
     // ── JS callbacks ────────────────────────────────────────────
@@ -314,6 +556,8 @@
     [JSInvokable]
     public async Task OnMapClick(double lat, double lng)
     {
+        if (_tourActive) return; // the tour is driving
+        _ = DismissWelcomeAsync();
         switch (_mode)
         {
             case PlayMode.Explore:
@@ -460,9 +704,10 @@
         {
             color = "#8b94a7",
             weight = 0.7,
-            opacity = 0.4,
+            opacity = _view.Z < 4.5 ? 0.28 : 0.4,
             fillOpacity = 0.012,
             labels = true,
+            labelClass = _view.Z < 4.5 ? "lo" : "",
             animate = false,
         });
     }
@@ -817,9 +1062,18 @@
         finally { _busy = false; }
     }
 
-    private async Task SetMode(PlayMode mode)
+    private Task SetMode(PlayMode mode) => SetModeAsync(mode, fromUser: true);
+
+    private async Task SetModeAsync(PlayMode mode, bool fromUser)
     {
+        if (fromUser && _tourActive)
+        {
+            // The user grabbed the wheel — the tour steps aside.
+            _tourCts?.Cancel();
+            _tourActive = false;
+        }
         if (_mode == mode) return;
+        _ = DismissWelcomeAsync();
         _mode = mode;
         _drawing = false;
         await Js("setMode", mode.ToString().ToLowerInvariant());
@@ -930,8 +1184,9 @@
         sb.AppendLine();
         if (_selHash is null)
         {
-            sb.AppendLine($"// click the map → Encode(lat, lng, precision: {_explorePrecision})");
-            sb.AppendLine($"string hash = geohasher.Encode(52.51628, 13.37770, {_explorePrecision});");
+            sb.AppendLine("// the chip under your cursor is Encode() live;");
+            sb.AppendLine("// click anywhere to pin a cell:");
+            sb.AppendLine($"string hash = geohasher.Encode(lat, lng, {_explorePrecision});");
             return;
         }
 
@@ -1012,8 +1267,7 @@
         if (_polyPoints is null)
         {
             sb.AppendLine("// draw a polygon (or pick a preset), then:");
-            sb.AppendLine("var cells = polygonHasher.GetHashes(zone, precision,");
-            sb.AppendLine("    PolygonHasher.GeohashInclusionCriteria.Intersects);");
+            sb.AppendLine($"var cells = polygonHasher.GetHashes(zone, {_polyEffectivePrecision});");
             return;
         }
 
@@ -1043,6 +1297,7 @@
 
     private async Task SaveUrlAsync(string? polyTag = null)
     {
+        if (_tourActive) { await Js("setUrlHash", "tour"); return; }
         string h = _mode switch
         {
             PlayMode.Explore => _selHash is null ? "e" : $"e/{_selHash}",
@@ -1062,12 +1317,17 @@
         catch { return; }
 
         if (string.IsNullOrEmpty(hash)) return;
+        _showWelcome = false; // deep link — the visitor already knows where they're going
         var parts = hash.Split('/', 2);
 
         try
         {
             switch (parts[0])
             {
+                case "tour":
+                    await StartTourAsync();
+                    return;
+
                 case "e" when parts.Length == 2 && Hasher.IsValid(parts[1]):
                     var b = Hasher.GetBoundingBox(parts[1]);
                     _explorePrecision = parts[1].Length;

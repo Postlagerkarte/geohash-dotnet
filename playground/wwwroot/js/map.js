@@ -66,6 +66,7 @@ export function init(elId, dotnetRef) {
     });
 
     map.on('moveend zoomend', notifyView);
+    map.on('zoomend', adjustSelectionFill);
 
     // Hover ghost: synchronous round-trip into .NET per animation frame.
     let pendingHover = null;
@@ -79,6 +80,7 @@ export function init(elId, dotnetRef) {
 
     map.on('mouseout', hideGhost);
     map.on('dragstart', hideGhost);
+    document.documentElement.addEventListener('mouseleave', hideGhost);
 
     document.addEventListener('keydown', e => {
         if (e.key === 'Escape' && drawing) {
@@ -88,6 +90,7 @@ export function init(elId, dotnetRef) {
     });
 
     notifyView();
+    window.__dbg = { map, layers }; // debug hook, harmless in production
 }
 
 function notifyView() {
@@ -186,13 +189,25 @@ export function drawCells(name, bounds, hashes, opts) {
         interactive: false,
     };
 
-    const labels = opts.labels && hashes && count <= 1200;
+    let labels = opts.labels && hashes && count <= 1200;
+    let labelClass = opts.labelClass || '';
+
+    if (labels && count > 0) {
+        // Label weight follows cell size on screen: big sparse cells get real
+        // labels, dense grids get faint texture, specks get nothing.
+        const a = map.latLngToContainerPoint([clampLat(bounds[0]), bounds[1]]);
+        const b = map.latLngToContainerPoint([clampLat(bounds[2]), bounds[3]]);
+        const px = Math.abs(b.x - a.x);
+        if (px < 34) labels = false;
+        else if (px < 95) labelClass = 'lo';
+    }
+
     const token = ++animToken;
 
     const addOne = i => {
         const s = bounds[i * 4], w = bounds[i * 4 + 1], n = bounds[i * 4 + 2], e = bounds[i * 4 + 3];
         addRect(g, s, w, n, e, style);
-        if (labels) addLabel(g, (s + n) / 2, (w + e) / 2, hashes[i], opts.labelClass || '');
+        if (labels) addLabel(g, (s + n) / 2, (w + e) / 2, hashes[i], labelClass);
     };
 
     if (!opts.animate || count > 9000) {
@@ -225,9 +240,12 @@ export function drawOutline(name, s, w, n, e, color, weight, dash, fillOpacity) 
     });
 }
 
+let selBox = null;
+
 export function drawSelection(s, w, n, e, zoomIfTiny) {
     const g = group('selection');
     g.clearLayers();
+    selBox = [s, w, n, e];
     addRect(g, s, w, n, e, {
         renderer: svgRenderer,
         className: 'sel-cell',
@@ -235,16 +253,32 @@ export function drawSelection(s, w, n, e, zoomIfTiny) {
         fillColor: '#22d3ee', fillOpacity: 0.16,
         interactive: false,
     });
+    adjustSelectionFill();
 
     if (zoomIfTiny) {
-        // If the cell is a speck at the current zoom, bring the user to it.
+        // If the cell is a speck at the current zoom, fly partway in — to where
+        // the cell is ~110 px and keeps its surroundings, not filling the screen.
         const p1 = map.latLngToContainerPoint([clampLat(s), w]);
         const p2 = map.latLngToContainerPoint([clampLat(n), e]);
         const px = Math.max(Math.abs(p2.x - p1.x), Math.abs(p2.y - p1.y));
         if (px < 14) {
-            map.flyToBounds([[clampLat(s), w], [clampLat(n), e]], { padding: [180, 180], duration: 1.1 });
+            const dz = Math.log2(110 / Math.max(px, 0.5));
+            const target = Math.min(Math.round(map.getZoom() + dz), 17);
+            map.flyTo([(clampLat(s) + clampLat(n)) / 2, (w + e) / 2], target, { duration: 1.2 });
         }
     }
+}
+
+// When the user zooms inside their selected cell, a 16% fill would wash the
+// whole viewport teal — fade it to a border-only highlight.
+function adjustSelectionFill() {
+    if (!selBox || !layers['selection']) return;
+    const a = map.latLngToContainerPoint([clampLat(selBox[0]), selBox[1]]);
+    const b = map.latLngToContainerPoint([clampLat(selBox[2]), selBox[3]]);
+    const px = Math.min(Math.abs(b.x - a.x), Math.abs(b.y - a.y));
+    const vp = Math.min(map.getSize().x, map.getSize().y);
+    const fill = px > vp * 0.75 ? 0.03 : 0.16;
+    layers['selection'].eachLayer(l => l.setStyle && l.setStyle({ fillOpacity: fill }));
 }
 
 export function drawNeighbors(items) {
@@ -343,8 +377,8 @@ export function flyTo(lat, lng, zoom) {
     map.flyTo([clampLat(lat), lng], zoom, { duration: 1.4 });
 }
 
-export function fitBounds(s, w, n, e) {
-    map.flyToBounds([[clampLat(s), w], [clampLat(n), e]], { padding: [70, 70], duration: 1.2, maxZoom: 15 });
+export function fitBounds(s, w, n, e, maxZoom) {
+    map.flyToBounds([[clampLat(s), w], [clampLat(n), e]], { padding: [70, 70], duration: 1.2, maxZoom: maxZoom || 15 });
 }
 
 // ── Polygon drawing (hand-rolled, no plugin) ────────────────────

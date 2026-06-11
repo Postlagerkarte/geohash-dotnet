@@ -15,30 +15,10 @@ dotnet add package geohash-dotnet
 > Developed with the support of **Claude Fable 5** (Anthropic), including the
 > discovery and fix of a subtle nearest-point bug near the poles. 🤖
 
-## 🛝 Try It Live — the Geohash Playground
-
-**[→ playground: postlagerkarte.github.io/geohash-dotnet](https://postlagerkarte.github.io/geohash-dotnet/)**
-
-The entire library, compiled to WebAssembly, running in your browser — no
-server, no install. Click the planet and watch it turn into cells:
-
-[![Geohash Playground](docs/playground-heart.png)](https://postlagerkarte.github.io/geohash-dotnet/)
-
-- **Explore** — hover to encode live under your cursor, click to pin a cell,
-  see its 8 neighbors, 32 children, and the Z-order curve that explains
-  geohash ordering. Hover the hash characters to walk up the hierarchy.
-- **Radius** — drag a slider and watch `RadiusHasher` cover the circle in
-  real time, including the Arctic preset where cells narrow toward the pole
-  and wrap across the date line.
-- **Polygon** — draw any shape (or cover Paris with a ❤️), then hit
-  *Compress* and watch thousands of cells collapse into a minimal
-  mixed-precision covering.
-
-Every interaction shows the **exact C# you'd write** (copy-paste ready) and
-the **real compute time** measured inside your browser tab.
-
-The playground lives in [`playground/`](playground/) — run it locally with
-`dotnet run --project playground`.
+🛝 **[Try it live in the browser playground →](https://postlagerkarte.github.io/geohash-dotnet/)**
+the full library running in your tab via WebAssembly, nothing to install.
+New to geohashes? Take the **[60-second guided tour](https://postlagerkarte.github.io/geohash-dotnet/#tour)** —
+the map explains the whole idea by performing it.
 
 ## 30-Second Tour
 
@@ -179,6 +159,17 @@ Precision          : named constants, e.g. Precision.Size_km_1x1 == 6
 Each precision level multiplies cell count by 32 — choose the coarsest
 precision your use case tolerates (`Precision` constants or
 `RadiusHasher.GetPrecisionForRadius` help).
+
+## 🛝 Playground
+
+Everything above, interactive: **[postlagerkarte.github.io/geohash-dotnet](https://postlagerkarte.github.io/geohash-dotnet/)** —
+hover to encode live, cover circles and polygons, compress coverings, and copy
+the exact C# for whatever you just did. The library runs in your browser via
+WebAssembly; the timings you see are real.
+
+[![Geohash Playground](docs/playground-heart.png)](https://postlagerkarte.github.io/geohash-dotnet/)
+
+Source in [`playground/`](playground/) — run locally with `dotnet run --project playground`.
 
 ## License & Credits
 
