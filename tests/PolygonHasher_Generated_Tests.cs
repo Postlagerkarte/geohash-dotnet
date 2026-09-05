@@ -477,13 +477,16 @@ namespace Geohash.Tests
         {
             double halfW = width / 2;
             double halfH = height / 2;
+            // Keep the rectangle inside the geographic domain; GetHashes rejects latitudes beyond +/-90.
+            double minLat = Math.Max(lat - halfH, -90.0);
+            double maxLat = Math.Min(lat + halfH, 90.0);
             return new Polygon(new LinearRing(new[]
             {
-                new Coordinate(lon - halfW, lat - halfH),
-                new Coordinate(lon - halfW, lat + halfH),
-                new Coordinate(lon + halfW, lat + halfH),
-                new Coordinate(lon + halfW, lat - halfH),
-                new Coordinate(lon - halfW, lat - halfH)
+                new Coordinate(lon - halfW, minLat),
+                new Coordinate(lon - halfW, maxLat),
+                new Coordinate(lon + halfW, maxLat),
+                new Coordinate(lon + halfW, minLat),
+                new Coordinate(lon - halfW, minLat)
             }));
         }
 

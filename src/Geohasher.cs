@@ -64,8 +64,14 @@ namespace Geohash
             if (precision < 1 || precision > MaxPrecision)
                 throw new ArgumentOutOfRangeException(nameof(precision), precision,
                     $"Precision must be between 1 and {MaxPrecision}.");
-            if (double.IsNaN(latitude) || double.IsNaN(longitude))
-                throw new ArgumentException("Coordinates must not be NaN.");
+
+            if (!GeographicMath.IsFinite(latitude))
+                throw new ArgumentOutOfRangeException(
+                    nameof(latitude), latitude, "Latitude must be finite.");
+
+            if (!GeographicMath.IsFinite(longitude))
+                throw new ArgumentOutOfRangeException(
+                    nameof(longitude), longitude, "Longitude must be finite.");
 
             latitude = ClampLatitude(latitude);
             longitude = NormalizeLongitude(longitude);
@@ -200,23 +206,29 @@ namespace Geohash
 
         // --- Internals ---
 
-        private string NeighborFromBox(in BoundingBox bbox, Direction direction, int precision)
+        private string NeighborFromBox(
+            in BoundingBox bbox,
+            Direction direction,
+            int precision)
         {
-            var (dLat, dLng) = Offsets[(int)direction];
+            int directionIndex = (int)direction;
+
+            if (directionIndex < 0 || directionIndex >= Offsets.Length)
+                throw new ArgumentOutOfRangeException(
+                    nameof(direction), direction, "Unknown neighbor direction.");
+
+            var (dLat, dLng) = Offsets[directionIndex];
+
             double lat = bbox.CenterLat + dLat * bbox.Height;
             double lng = bbox.CenterLng + dLng * bbox.Width;
-            // Encode normalizes longitude (date line wrap) and clamps latitude (poles).
+
             return Encode(lat, lng, precision);
         }
 
         /// <summary>Wraps longitude into [-180, 180). E.g. -185 → 175, 185 → -175.</summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        private static double NormalizeLongitude(double lng)
-        {
-            double result = (lng + 180.0) % 360.0;
-            if (result < 0) result += 360.0;
-            return result - 180.0;
-        }
+        private static double NormalizeLongitude(double longitude) =>
+            GeographicMath.NormalizeLongitude(longitude);
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static double ClampLatitude(double lat) =>

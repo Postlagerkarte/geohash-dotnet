@@ -4,7 +4,9 @@ using System.Collections.Generic;
 namespace Geohash
 {
     /// <summary>
-    /// Compresses a set of geohashes into the minimal set of cells covering the same area.
+    /// Removes redundant geohash cells and merges complete sibling groups
+    /// after truncating inputs to the requested maximum level.
+    /// Truncation can expand the covered area; subsequent compression preserves it.
     /// </summary>
     public class GeohashCompressor
     {
@@ -28,10 +30,17 @@ namespace Geohash
             var inputSet = new HashSet<string>(StringComparer.Ordinal);
             foreach (var hash in geohashes)
             {
-                if (string.IsNullOrEmpty(hash)) continue;
-                string h = hash.Length > maxLevel ? hash.Substring(0, maxLevel) : hash;
-                Geohasher.ValidateGeohash(h); // garbage input would corrupt the 32-sibling merge
-                inputSet.Add(h);
+                if (string.IsNullOrEmpty(hash))
+                    continue;
+
+                string h = hash.Length > maxLevel
+                    ? hash.Substring(0, maxLevel)
+                    : hash;
+
+                Geohasher.ValidateGeohash(h);
+
+                // Canonicalize before deduplication, prefix pruning, or child counting.
+                inputSet.Add(h.ToLowerInvariant());
             }
 
             if (inputSet.Count == 0) return new List<string>();

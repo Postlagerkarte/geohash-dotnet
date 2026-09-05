@@ -56,6 +56,17 @@ namespace Geohash
                 throw new ArgumentOutOfRangeException(nameof(geohashPrecision),
                     $"Precision must be between 1 and {Geohasher.MaxPrecision}.");
 
+            if (geohashInclusionCriteria != GeohashInclusionCriteria.Contains &&
+                geohashInclusionCriteria != GeohashInclusionCriteria.Intersects)
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(geohashInclusionCriteria),
+                    geohashInclusionCriteria,
+                    "Unknown inclusion criterion.");
+            }
+
+            cancellationToken.ThrowIfCancellationRequested();
+
             var results = new HashSet<string>(StringComparer.Ordinal);
 
             if (polygon.IsEmpty)
@@ -66,6 +77,8 @@ namespace Geohash
 
             if (!polygon.IsValid)
                 throw new ArgumentException("Polygon must be valid.", nameof(polygon));
+
+            ValidateGeographicCoordinates(polygon);
 
             var polys = HandleAntimeridian(polygon)
                 .Where(p => p != null && !p.IsEmpty && p.IsValid)
@@ -88,22 +101,31 @@ namespace Geohash
             foreach (var poly in polys)
             {
                 var envelope = poly.EnvelopeInternal.Copy();
-                envelope.ExpandBy(lngStep / 2, latStep / 2); // catch edge-touching cells
-                envelope = new Envelope(
-                    Math.Max(envelope.MinX, -180.0), Math.Min(envelope.MaxX, 180.0),
-                    Math.Max(envelope.MinY, -90.0), Math.Min(envelope.MaxY, 90.0));
+                envelope.ExpandBy(lngStep / 2, latStep / 2);
 
-                // The geohash grid is aligned at 0°, so cell i spans [i*step, (i+1)*step).
+                double minLng = Math.Max(envelope.MinX, -180.0);
+                double maxLng = Math.Min(envelope.MaxX, 180.0);
+                double minLat = Math.Max(envelope.MinY, -90.0);
+                double maxLat = Math.Min(envelope.MaxY, 90.0);
+
+                // Envelope sorts its endpoints, so check emptiness before constructing it.
+                if (minLng > maxLng || minLat > maxLat)
+                    continue;
+
+                // The geohash grid is aligned at 0, so cell i spans [i*step, (i+1)*step).
                 var info = new PolygonGridInfo
                 {
                     Polygon = poly,
-                    StartLatIdx = (int)Math.Floor(envelope.MinY / latStep),
-                    EndLatIdx = (int)Math.Ceiling(envelope.MaxY / latStep),
-                    StartLngIdx = (int)Math.Floor(envelope.MinX / lngStep),
-                    EndLngIdx = (int)Math.Ceiling(envelope.MaxX / lngStep),
+                    StartLatIdx = (int)Math.Floor(minLat / latStep),
+                    EndLatIdx = (int)Math.Ceiling(maxLat / latStep),
+                    StartLngIdx = (int)Math.Floor(minLng / lngStep),
+                    EndLngIdx = (int)Math.Ceiling(maxLng / lngStep),
                 };
 
-                totalSteps += Math.Max(info.EndLatIdx - info.StartLatIdx, 0);
+                if (info.EndLatIdx <= info.StartLatIdx || info.EndLngIdx <= info.StartLngIdx)
+                    continue;
+
+                totalSteps += info.EndLatIdx - info.StartLatIdx;
                 polyInfos.Add(info);
             }
 
@@ -379,6 +401,36 @@ namespace Geohash
             catch
             {
                 return null;
+            }
+        }
+
+        private static void ValidateGeographicCoordinates(Polygon polygon)
+        {
+            foreach (var coordinate in polygon.Coordinates)
+            {
+                if (!GeographicMath.IsFinite(coordinate.X) ||
+                    !GeographicMath.IsFinite(coordinate.Y))
+                {
+                    throw new ArgumentException(
+                        "Polygon coordinates must be finite.",
+                        nameof(polygon));
+                }
+
+                if (coordinate.Y < -90.0 || coordinate.Y > 90.0)
+                {
+                    throw new ArgumentException(
+                        "Polygon latitude must be between -90 and 90.",
+                        nameof(polygon));
+                }
+
+                if (coordinate.X < -180.0 || coordinate.X > 180.0)
+                {
+                    throw new ArgumentException(
+                        "Polygon longitude must be between -180 and 180. " +
+                        "Represent antimeridian crossings using coordinates " +
+                        "within that range.",
+                        nameof(polygon));
+                }
             }
         }
 

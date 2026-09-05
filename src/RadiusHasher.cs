@@ -20,87 +20,81 @@ namespace Geohash
 
         private static readonly Geohasher Hasher = new Geohasher();
 
-        /// <summary>
-        /// Returns all geohashes of the given precision matching the circle, with the
-        /// precision chosen automatically so the circle is covered by a reasonable
-        /// number of cells (cell size ≈ radius / 2 or finer).
-        /// </summary>
-        public HashSet<string> GetHashes(
-            double latitude,
-            double longitude,
-            double radiusMeters,
-            GeohashInclusionCriteria criteria = GeohashInclusionCriteria.Intersects,
-            CancellationToken cancellationToken = default)
-        {
-            int precision = GetPrecisionForRadius(radiusMeters, latitude);
-            return GetHashes(latitude, longitude, radiusMeters, precision, criteria,
-                cancellationToken: cancellationToken);
-        }
 
-        /// <summary>
-        /// Returns all geohashes of the given precision matching the circle.
-        /// </summary>
-        /// <param name="latitude">Circle center latitude [-90, 90].</param>
-        /// <param name="longitude">Circle center longitude; wrapped into [-180, 180).</param>
-        /// <param name="radiusMeters">Circle radius in meters (≥ 0).</param>
-        /// <param name="geohashPrecision">1–12. Higher precision = exponentially more cells.</param>
-        /// <param name="criteria">
-        /// <see cref="GeohashInclusionCriteria.Intersects"/>: cell touches the circle (default).
-        /// <see cref="GeohashInclusionCriteria.Contains"/>: cell lies entirely inside the circle.
-        /// </param>
-        /// <param name="maxCandidateCells">
-        /// Safety limit on the number of grid cells examined. Guards against accidental
-        /// "precision 12 + 500 km radius" requests that would enumerate billions of cells.
-        /// </param>
-        /// <param name="cancellationToken">Token to cancel the operation.</param>
+
         public HashSet<string> GetHashes(
-            double latitude,
-            double longitude,
-            double radiusMeters,
-            int geohashPrecision,
-            GeohashInclusionCriteria criteria = GeohashInclusionCriteria.Intersects,
-            long maxCandidateCells = 10_000_000,
-            CancellationToken cancellationToken = default)
+    double latitude,
+    double longitude,
+    double radiusMeters,
+    int geohashPrecision,
+    GeohashInclusionCriteria criteria = GeohashInclusionCriteria.Intersects,
+    long maxCandidateCells = 10_000_000,
+    CancellationToken cancellationToken = default)
         {
-            // --- Validation ---
-            if (double.IsNaN(latitude) || double.IsNaN(longitude) || double.IsNaN(radiusMeters))
-                throw new ArgumentException("Inputs must not be NaN.");
-            if (latitude < -90.0 || latitude > 90.0)
-                throw new ArgumentOutOfRangeException(nameof(latitude), latitude,
-                    "Latitude must be between -90 and 90.");
-            if (radiusMeters < 0 || double.IsInfinity(radiusMeters))
-                throw new ArgumentOutOfRangeException(nameof(radiusMeters), radiusMeters,
-                    "Radius must be a finite, non-negative number of meters.");
-            if (geohashPrecision < 1 || geohashPrecision > Geohasher.MaxPrecision)
-                throw new ArgumentOutOfRangeException(nameof(geohashPrecision), geohashPrecision,
+            ValidateLatitude(latitude);
+            ValidateRadius(radiusMeters);
+
+            if (!GeographicMath.IsFinite(longitude))
+                throw new ArgumentOutOfRangeException(
+                    nameof(longitude), longitude, "Longitude must be finite.");
+
+            if (geohashPrecision < 1 ||
+                geohashPrecision > Geohasher.MaxPrecision)
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(geohashPrecision), geohashPrecision,
                     $"Precision must be between 1 and {Geohasher.MaxPrecision}.");
+            }
 
-            longitude = NormalizeLongitude(longitude);
+            if (criteria != GeohashInclusionCriteria.Contains &&
+                criteria != GeohashInclusionCriteria.Intersects)
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(criteria), criteria, "Unknown inclusion criterion.");
+            }
 
-            // --- Geographic bounding box of the circle ---
-            double angularRadius = radiusMeters / EarthRadiusMeters; // radians
+            if (maxCandidateCells <= 0)
+                throw new ArgumentOutOfRangeException(
+                    nameof(maxCandidateCells), maxCandidateCells,
+                    "The candidate-cell limit must be positive.");
+
+            cancellationToken.ThrowIfCancellationRequested();
+
+            longitude = GeographicMath.NormalizeLongitude(longitude);
+
+            var results = new HashSet<string>(StringComparer.Ordinal);
+            bool requireContains = criteria == GeohashInclusionCriteria.Contains;
+
+            // Every supported geohash cell has nonzero area.
+            if (requireContains && radiusMeters == 0.0)
+                return results;
+
+            double angularRadius = radiusMeters / EarthRadiusMeters;
             double radiusDeg = angularRadius / DegToRad;
 
             double latMin = latitude - radiusDeg;
             double latMax = latitude + radiusDeg;
 
-            // If the circle reaches a pole, it spans all longitudes.
             bool fullLngRange = latMax >= 90.0 || latMin <= -90.0;
 
-            double lngMin = -180.0, lngMax = 180.0;
+            double lngMin = -180.0;
+            double lngMax = 180.0;
+
             if (!fullLngRange)
             {
-                // Longitude half-width of a circle's bounding box: Δλ = asin(sin δ / cos φ)
-                double ratio = Math.Sin(angularRadius) / Math.Cos(latitude * DegToRad);
+                double ratio =
+                    Math.Sin(angularRadius) / CosLatitude(latitude);
+
                 if (ratio >= 1.0)
                 {
                     fullLngRange = true;
                 }
                 else
                 {
-                    double deltaLngDeg = Math.Asin(ratio) / DegToRad;
-                    // Deliberately unnormalized (may exceed ±180): the grid index loop
-                    // handles antimeridian wrapping; Encode normalizes at the end.
+                    double deltaLngDeg =
+                        Math.Asin(Clamp(ratio, -1.0, 1.0)) / DegToRad;
+
+                    // Leave these unnormalized: the grid may cross the date line.
                     lngMin = longitude - deltaLngDeg;
                     lngMax = longitude + deltaLngDeg;
                 }
@@ -109,86 +103,97 @@ namespace Geohash
             latMin = Math.Max(latMin, -90.0);
             latMax = Math.Min(latMax, 90.0);
 
-            // --- Grid setup (same scheme as PolygonHasher: cell i spans [i·step, (i+1)·step)) ---
             int totalBits = 5 * geohashPrecision;
-            double latStep = 180.0 / (1L << (totalBits / 2));
-            double lngStep = 360.0 / (1L << ((totalBits + 1) / 2));
+            int latBits = totalBits / 2;
+            int lngBits = (totalBits + 1) / 2;
 
-            int latStart = (int)Math.Floor(latMin / latStep);
-            int latEnd = (int)Math.Ceiling(latMax / latStep);
-            int lngStart = (int)Math.Floor(lngMin / lngStep);
-            int lngEnd = (int)Math.Ceiling(lngMax / lngStep);
+            int latCellCount = 1 << latBits;
+            int lngCellCount = 1 << lngBits;
 
-            long candidates = (long)(latEnd - latStart) * (lngEnd - lngStart);
+            double latStep = 180.0 / latCellCount;
+            double lngStep = 360.0 / lngCellCount;
+
+            int worldLatStart = -(latCellCount / 2);
+            int worldLatEnd = latCellCount / 2;
+            int worldLngStart = -(lngCellCount / 2);
+            int worldLngEnd = lngCellCount / 2;
+
+            // Intersects includes touching. Pad the bounding grid so exact
+            // boundaries and zero-radius points do not disappear.
+            // The distance predicate rejects unnecessary candidates.
+            int padding = requireContains ? 0 : 1;
+
+            int latStart = Math.Max(
+                worldLatStart,
+                (int)Math.Floor(latMin / latStep) - padding);
+
+            int latEnd = Math.Min(
+                worldLatEnd,
+                (int)Math.Ceiling(latMax / latStep) + padding);
+
+            int lngStart;
+            int lngEnd;
+
+            if (fullLngRange)
+            {
+                // Enumerate one complete revolution, without duplicate padding.
+                lngStart = worldLngStart;
+                lngEnd = worldLngEnd;
+            }
+            else
+            {
+                lngStart = (int)Math.Floor(lngMin / lngStep) - padding;
+                lngEnd = (int)Math.Ceiling(lngMax / lngStep) + padding;
+            }
+
+            long candidates =
+                ((long)latEnd - latStart) * ((long)lngEnd - lngStart);
+
             if (candidates > maxCandidateCells)
+            {
                 throw new ArgumentException(
-                    $"Search would examine {candidates:N0} cells (limit {maxCandidateCells:N0}). " +
+                    $"Search would examine {candidates:N0} cells " +
+                    $"(limit {maxCandidateCells:N0}). " +
                     $"Reduce precision (currently {geohashPrecision}) or radius, " +
-                    $"or raise {nameof(maxCandidateCells)}.");
+                    $"or raise {nameof(maxCandidateCells)}.",
+                    nameof(maxCandidateCells));
+            }
 
-            // --- Hot-loop precomputation ---
-            // d <= r  <=>  haversineTerm <= sin²(r / 2R). Avoids asin/sqrt per cell.
             double s = Math.Sin(Math.Min(angularRadius, Math.PI) * 0.5);
             double threshold = s * s;
 
             double centerLatRad = latitude * DegToRad;
-            double cosCenterLat = Math.Cos(centerLatRad);
-            bool requireContains = criteria == GeohashInclusionCriteria.Contains;
-
-            var results = new HashSet<string>(StringComparer.Ordinal);
+            double cosCenterLat = CosLatitude(latitude);
 
             for (int latIdx = latStart; latIdx < latEnd; latIdx++)
             {
                 cancellationToken.ThrowIfCancellationRequested();
 
-                double cellMinLat = Math.Max(latIdx * latStep, -90.0);
-                double cellMaxLat = Math.Min(cellMinLat + latStep, 90.0);
+                double cellMinLat = latIdx * latStep;
+                double cellMaxLat = cellMinLat + latStep;
 
                 for (int lngIdx = lngStart; lngIdx < lngEnd; lngIdx++)
                 {
+                    // A single row can contain many millions of candidates.
+                    if ((lngIdx & 1023) == 0)
+                        cancellationToken.ThrowIfCancellationRequested();
+
                     double cellMinLng = lngIdx * lngStep;
                     double cellMaxLng = cellMinLng + lngStep;
 
-                    // Shift the query longitude into the cell's (possibly unnormalized)
-                    // frame so plain clamping works across the antimeridian.
-                    double qLng = longitude;
-                    if (qLng < cellMinLng - 180.0) qLng += 360.0;
-                    else if (qLng > cellMaxLng + 180.0) qLng -= 360.0;
+                    double qLng = ShiftLongitudeToCell(
+                        longitude, cellMinLng, cellMaxLng);
 
-                    bool include;
-                    if (requireContains)
-                    {
-                        // Entire cell inside circle <=> farthest point inside circle.
-                        // The farthest boundary point is always a corner...
-                        include =
-                            HaversineTerm(centerLatRad, cosCenterLat, cellMinLat, qLng - cellMinLng) <= threshold &&
-                            HaversineTerm(centerLatRad, cosCenterLat, cellMinLat, qLng - cellMaxLng) <= threshold &&
-                            HaversineTerm(centerLatRad, cosCenterLat, cellMaxLat, qLng - cellMinLng) <= threshold &&
-                            HaversineTerm(centerLatRad, cosCenterLat, cellMaxLat, qLng - cellMaxLng) <= threshold;
+                    double term = requireContains
+                        ? FarthestHaversineTerm(
+                            centerLatRad, cosCenterLat, latitude, qLng,
+                            cellMinLat, cellMaxLat, cellMinLng, cellMaxLng)
+                        : NearestHaversineTerm(
+                            centerLatRad, cosCenterLat, latitude, qLng,
+                            cellMinLat, cellMaxLat, cellMinLng, cellMaxLng);
 
-                        // ...unless the cell contains the center's antipode (distance πR),
-                        // which can exceed all four corner distances.
-                        if (include && threshold < 1.0)
-                        {
-                            double aLng = qLng + 180.0;
-                            if (aLng > cellMaxLng + 180.0) aLng -= 360.0;
-                            if (-latitude >= cellMinLat && -latitude <= cellMaxLat &&
-                                aLng >= cellMinLng && aLng <= cellMaxLng)
-                            {
-                                include = false;
-                            }
-                        }
-                    }
-                    else
+                    if (term <= threshold)
                     {
-                        // Cell touches circle <=> nearest point of cell inside circle.
-                        include = NearestHaversineTerm(centerLatRad, cosCenterLat, latitude, qLng,
-                            cellMinLat, cellMaxLat, cellMinLng, cellMaxLng) <= threshold;
-                    }
-
-                    if (include)
-                    {
-                        // Encode normalizes longitude back into [-180, 180).
                         results.Add(Hasher.Encode(
                             cellMinLat + latStep * 0.5,
                             cellMinLng + lngStep * 0.5,
@@ -199,7 +204,6 @@ namespace Geohash
 
             return results;
         }
-
         /// <summary>
         /// Smallest haversine term between the query point and any point of the cell.
         /// The independently-clamped point is exact for the cell interior and its
@@ -209,30 +213,145 @@ namespace Geohash
         /// shortest path cuts across the pole instead of along the parallel).
         /// </summary>
         private static double NearestHaversineTerm(
-            double centerLatRad, double cosCenterLat,
-            double centerLatDeg, double qLngDeg,
-            double cellMinLat, double cellMaxLat,
-            double cellMinLng, double cellMaxLng)
+      double centerLatRad,
+      double cosCenterLat,
+      double centerLatDeg,
+      double qLngDeg,
+      double cellMinLat,
+      double cellMaxLat,
+      double cellMinLng,
+      double cellMaxLng)
         {
-            // Candidate 1: clamped point (also handles "query inside cell" => 0).
+            // Handles the cell interior and nearest points on latitude edges.
             double cLat = Clamp(centerLatDeg, cellMinLat, cellMaxLat);
             double cLng = Clamp(qLngDeg, cellMinLng, cellMaxLng);
-            double best = HaversineTerm(centerLatRad, cosCenterLat, cLat, qLngDeg - cLng);
 
-            // Candidates 2 & 3: analytic optimum on each meridian edge.
+            double best = HaversineTerm(
+                centerLatRad, cosCenterLat, cLat, qLngDeg - cLng);
+
             double sinCenterLat = Math.Sin(centerLatRad);
 
-            best = Math.Min(best, MeridianEdgeTerm(cellMinLng));
-            best = Math.Min(best, MeridianEdgeTerm(cellMaxLng));
-            return best;
+            best = Math.Min(best, MeridianHaversineExtreme(
+                centerLatRad, sinCenterLat, cosCenterLat,
+                qLngDeg, cellMinLng, cellMinLat, cellMaxLat,
+                maximum: false));
 
-            double MeridianEdgeTerm(double edgeLng)
+            best = Math.Min(best, MeridianHaversineExtreme(
+                centerLatRad, sinCenterLat, cosCenterLat,
+                qLngDeg, cellMaxLng, cellMinLat, cellMaxLat,
+                maximum: false));
+
+            return best;
+        }
+
+        private static double FarthestHaversineTerm(
+            double centerLatRad,
+            double cosCenterLat,
+            double centerLatDeg,
+            double qLngDeg,
+            double cellMinLat,
+            double cellMaxLat,
+            double cellMinLng,
+            double cellMaxLng)
+        {
+            double sinCenterLat = Math.Sin(centerLatRad);
+
+            double best = Math.Max(
+                MeridianHaversineExtreme(
+                    centerLatRad, sinCenterLat, cosCenterLat,
+                    qLngDeg, cellMinLng, cellMinLat, cellMaxLat,
+                    maximum: true),
+                MeridianHaversineExtreme(
+                    centerLatRad, sinCenterLat, cosCenterLat,
+                    qLngDeg, cellMaxLng, cellMinLat, cellMaxLat,
+                    maximum: true));
+
+            // A latitude-edge maximum may occur at the antipodal longitude,
+            // rather than at either corner.
+            double antipodeLng = ShiftLongitudeToCell(
+                qLngDeg + 180.0, cellMinLng, cellMaxLng);
+
+            if (antipodeLng >= cellMinLng && antipodeLng <= cellMaxLng)
             {
-                double dLngRad = (qLngDeg - edgeLng) * DegToRad;
-                double optimalLatDeg = Math.Atan2(sinCenterLat, cosCenterLat * Math.Cos(dLngRad)) / DegToRad;
-                double lat = Clamp(optimalLatDeg, cellMinLat, cellMaxLat);
-                return HaversineTerm(centerLatRad, cosCenterLat, lat, qLngDeg - edgeLng);
+                // If the complete antipode lies in the cell, the maximum
+                // distance is exactly pi * EarthRadiusMeters.
+                if (-centerLatDeg >= cellMinLat &&
+                    -centerLatDeg <= cellMaxLat)
+                {
+                    return 1.0;
+                }
+
+                best = Math.Max(best, MeridianHaversineExtreme(
+                    centerLatRad, sinCenterLat, cosCenterLat,
+                    qLngDeg, antipodeLng, cellMinLat, cellMaxLat,
+                    maximum: true));
             }
+
+            return best;
+        }
+
+        private static double MeridianHaversineExtreme(
+            double centerLatRad,
+            double sinCenterLat,
+            double cosCenterLat,
+            double qLngDeg,
+            double edgeLngDeg,
+            double cellMinLat,
+            double cellMaxLat,
+            bool maximum)
+        {
+            double deltaLngDeg = qLngDeg - edgeLngDeg;
+
+            double atMinLat = HaversineTerm(
+                centerLatRad, cosCenterLat, cellMinLat, deltaLngDeg);
+
+            double atMaxLat = HaversineTerm(
+                centerLatRad, cosCenterLat, cellMaxLat, deltaLngDeg);
+
+            // Endpoints are mandatory: clamping a stationary point does not
+            // necessarily select the correct endpoint on the far hemisphere.
+            double best = maximum
+                ? Math.Max(atMinLat, atMaxLat)
+                : Math.Min(atMinLat, atMaxLat);
+
+            // The spherical dot product along this meridian is:
+            // A * sin(latitude) + B * cos(latitude).
+            double a = sinCenterLat;
+            double b = cosCenterLat * Math.Cos(deltaLngDeg * DegToRad);
+
+            // Minimum distance maximizes the dot product.
+            // Maximum distance minimizes it.
+            double stationaryLatDeg = maximum
+                ? Math.Atan2(-a, -b) / DegToRad
+                : Math.Atan2(a, b) / DegToRad;
+
+            if (stationaryLatDeg >= cellMinLat &&
+                stationaryLatDeg <= cellMaxLat)
+            {
+                double stationaryTerm = HaversineTerm(
+                    centerLatRad, cosCenterLat,
+                    stationaryLatDeg, deltaLngDeg);
+
+                best = maximum
+                    ? Math.Max(best, stationaryTerm)
+                    : Math.Min(best, stationaryTerm);
+            }
+
+            return best;
+        }
+
+        private static double ShiftLongitudeToCell(
+            double longitude,
+            double cellMinLng,
+            double cellMaxLng)
+        {
+            double cellCenterLng =
+                cellMinLng + (cellMaxLng - cellMinLng) * 0.5;
+
+            double revolutions =
+                Math.Round((cellCenterLng - longitude) / 360.0);
+
+            return longitude + revolutions * 360.0;
         }
         /// <summary>
         /// Returns the smallest precision whose cell size (at the given latitude) is at most
@@ -240,8 +359,8 @@ namespace Geohash
         /// </summary>
         public static int GetPrecisionForRadius(double radiusMeters, double latitude = 0)
         {
-            if (radiusMeters < 0 || double.IsNaN(radiusMeters))
-                throw new ArgumentOutOfRangeException(nameof(radiusMeters));
+            ValidateRadius(radiusMeters);
+            ValidateLatitude(latitude);
 
             for (int p = 1; p <= Geohasher.MaxPrecision; p++)
             {
@@ -259,24 +378,77 @@ namespace Geohash
         public static (double widthMeters, double heightMeters) GetCellSizeMeters(
             int precision, double latitude = 0)
         {
-            if (precision < 1 || precision > Geohasher.MaxPrecision)
-                throw new ArgumentOutOfRangeException(nameof(precision));
+            ValidateLatitude(latitude);
 
             int totalBits = 5 * precision;
             double latStep = 180.0 / (1L << (totalBits / 2));
             double lngStep = 360.0 / (1L << ((totalBits + 1) / 2));
 
             double height = latStep * MetersPerDegree;
-            double width = lngStep * MetersPerDegree * Math.Abs(Math.Cos(latitude * DegToRad));
+            double width = lngStep * MetersPerDegree * CosLatitude(latitude);
             return (width, height);
         }
 
-        /// <summary>Great-circle (haversine) distance between two points in meters.</summary>
-        public static double GetDistanceMeters(double lat1, double lng1, double lat2, double lng2)
+        /// <summary>
+        /// Selects precision from the radius and latitude, then generates coverage.
+        /// The candidate-cell safety limit still applies.
+        /// </summary>
+        public HashSet<string> GetHashes(
+            double latitude,
+            double longitude,
+            double radiusMeters,
+            GeohashInclusionCriteria criteria = GeohashInclusionCriteria.Intersects,
+            CancellationToken cancellationToken = default)
         {
-            double lat1Rad = lat1 * DegToRad;
-            double a = HaversineTerm(lat1Rad, Math.Cos(lat1Rad), lat2, lng1 - lng2);
-            return 2.0 * EarthRadiusMeters * Math.Asin(Math.Min(1.0, Math.Sqrt(a)));
+            int precision = GetPrecisionForRadius(radiusMeters, latitude);
+
+            return GetHashes(
+                latitude: latitude,
+                longitude: longitude,
+                radiusMeters: radiusMeters,
+                geohashPrecision: precision,
+                criteria: criteria,
+                cancellationToken: cancellationToken);
+        }
+
+        /// <summary>Great-circle (haversine) distance between two points in meters.</summary>
+        public static double GetDistanceMeters(
+            double lat1,
+            double lng1,
+            double lat2,
+            double lng2)
+        {
+            if (!GeographicMath.IsFinite(lat1) || lat1 < -90.0 || lat1 > 90.0)
+                throw new ArgumentOutOfRangeException(
+                    nameof(lat1), lat1, "Latitude must be finite and between -90 and 90.");
+
+            if (!GeographicMath.IsFinite(lat2) || lat2 < -90.0 || lat2 > 90.0)
+                throw new ArgumentOutOfRangeException(
+                    nameof(lat2), lat2, "Latitude must be finite and between -90 and 90.");
+
+            if (!GeographicMath.IsFinite(lng1))
+                throw new ArgumentOutOfRangeException(
+                    nameof(lng1), lng1, "Longitude must be finite.");
+
+            if (!GeographicMath.IsFinite(lng2))
+                throw new ArgumentOutOfRangeException(
+                    nameof(lng2), lng2, "Longitude must be finite.");
+
+            // Normalize separately before subtracting to avoid overflow for
+            // large finite longitudes of opposite signs.
+            double normalizedLng1 = GeographicMath.NormalizeLongitude(lng1);
+            double normalizedLng2 = GeographicMath.NormalizeLongitude(lng2);
+
+            double deltaLng = GeographicMath.NormalizeLongitude(
+                normalizedLng1 - normalizedLng2);
+
+            double a = HaversineTerm(
+                lat1 * DegToRad,
+                CosLatitude(lat1),
+                lat2,
+                deltaLng);
+
+            return 2.0 * EarthRadiusMeters * Math.Asin(Math.Sqrt(a));
         }
 
         /// <summary>Great-circle distance between the centers of two geohash cells in meters.</summary>
@@ -296,12 +468,54 @@ namespace Geohash
         /// longitude differences are safe.
         /// </summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        private static double HaversineTerm(double lat1Rad, double cosLat1, double lat2Deg, double dLngDeg)
+        private static double HaversineTerm(
+            double lat1Rad,
+            double cosLat1,
+            double lat2Deg,
+            double dLngDeg)
         {
             double lat2Rad = lat2Deg * DegToRad;
+
             double sinLat = Math.Sin((lat2Rad - lat1Rad) * 0.5);
             double sinLng = Math.Sin(dLngDeg * DegToRad * 0.5);
-            return sinLat * sinLat + cosLat1 * Math.Cos(lat2Rad) * sinLng * sinLng;
+
+            double term =
+                sinLat * sinLat +
+                cosLat1 * CosLatitude(lat2Deg) * sinLng * sinLng;
+
+            return Clamp(term, 0.0, 1.0);
+        }
+
+        private static void ValidateLatitude(double latitude)
+        {
+            if (!GeographicMath.IsFinite(latitude) ||
+                latitude < -90.0 ||
+                latitude > 90.0)
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(latitude), latitude,
+                    "Latitude must be finite and between -90 and 90.");
+            }
+        }
+
+        private static void ValidateRadius(double radiusMeters)
+        {
+            if (!GeographicMath.IsFinite(radiusMeters) || radiusMeters < 0.0)
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(radiusMeters), radiusMeters,
+                    "Radius must be finite and non-negative.");
+            }
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static double CosLatitude(double latitude)
+        {
+            // Math.Cos(pi / 2) is not exactly zero in floating-point arithmetic.
+            if (latitude == -90.0 || latitude == 90.0)
+                return 0.0;
+
+            return Math.Cos(latitude * DegToRad);
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
